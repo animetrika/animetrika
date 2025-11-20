@@ -1,0 +1,8 @@
+{
+  "name": "Animetrika Messenger",
+  "description": "A secure, end-to-end encrypted messenger with video calls, voice notes, and AI integration.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
