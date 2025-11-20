@@ -2,16 +2,20 @@
 import axios from 'axios';
 import { io, Socket } from 'socket.io-client';
 
-// Determine API base URL
+// Determine API base URL dynamically
 const getBaseUrl = () => {
-    const { hostname, protocol } = window.location;
+    const { hostname, protocol, port } = window.location;
+    
+    // Development environment
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        // If running on default Vite port 5173, look for backend on 3001
         return 'http://localhost:3001';
     }
-    // In production (Nginx), API is served from the same origin /api
-    // We return an empty string so axios uses the current domain automatically,
-    // OR we return the explicit domain without port if needed for Socket.io
-    return `${protocol}//${hostname}`;
+    
+    // Production environment (chat.nwlnd.ru)
+    // Nginx serves everything on port 80/443, so we use the same origin
+    // The '/api' and '/socket.io' paths are handled by Nginx proxy
+    return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
 };
 
 const BASE_URL = getBaseUrl();
@@ -43,8 +47,8 @@ export const connectSocket = (token?: string) => {
     if (socket && socket.connected) return socket;
     
     socket = io(SOCKET_URL, {
-        auth: { token: authToken }, // Send token for auth middleware
-        transports: ['websocket', 'polling'], // Add polling for robust Nginx fallback
+        auth: { token: authToken },
+        transports: ['websocket', 'polling'],
         path: '/socket.io/'
     });
 

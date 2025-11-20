@@ -21,12 +21,15 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const server = http.createServer(app);
 
+// IMPORTANT: Trust Nginx Proxy
+app.set('trust proxy', 1);
+
 // SECURITY: Strict CORS Policy
 const allowedOrigins = [
   'https://chat.nwlnd.ru', 
-  'http://localhost:3001', 
+  'http://chat.nwlnd.ru',
   'http://localhost:5173',
-  'http://localhost:3000'
+  'http://localhost:4173'
 ];
 
 const corsOptions = {
@@ -44,7 +47,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 const io = new Server(server, {
-  cors: corsOptions
+  cors: corsOptions,
+  path: '/socket.io/'
 });
 
 // Config
@@ -63,15 +67,7 @@ if (!fs.existsSync(UPLOAD_DIR)){
 // 1. Helmet with customized CSP for WebRTC and Media
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      connectSrc: ["'self'", "ws:", "wss:", "https://api.dicebear.com", "https://stun.l.google.com:19302"],
-      imgSrc: ["'self'", "data:", "blob:", "https://api.dicebear.com", "https://upload.wikimedia.org"],
-      mediaSrc: ["'self'", "data:", "blob:"],
-      scriptSrc: ["'self'", "'unsafe-inline'"], // React scripts
-    },
-  },
+  contentSecurityPolicy: false, // Disable CSP header here, let Nginx or Frontend handle specifics if needed, or configure strictly
 }));
 
 // 2. Data Sanitization against NoSQL Injection
@@ -81,12 +77,12 @@ app.use(mongoSanitize());
 app.use(xss());
 
 // 4. Body Parser Limit
-app.use(express.json({ limit: '1mb' })); // Reduced limit for JSON, File upload handles large data
+app.use(express.json({ limit: '1mb' })); 
 
 // 5. Rate Limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300, 
+  max: 1000, // Higher limit for chat apps polling/media
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -94,7 +90,7 @@ app.use('/api/', limiter);
 
 const authLimiter = rateLimit({
     windowMs: 60 * 60 * 1000, // 1 hour
-    max: 20,
+    max: 50,
     message: "Too many login attempts, please try again later"
 });
 app.use('/api/login', authLimiter);
@@ -109,7 +105,6 @@ const storage = multer.diskStorage({
       cb(null, UPLOAD_DIR)
     },
     filename: function (req, file, cb) {
-      // Security: Ignore user-provided filename to prevent path traversal
       const ext = path.extname(file.originalname) || '.bin';
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
       cb(null, uniqueSuffix + ext);
@@ -118,9 +113,8 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB Max Server Side
+    limits: { fileSize: 100 * 1024 * 1024 }, // 100MB Max Server Side
     fileFilter: (req, file, cb) => {
-        // Strict MIME type check
         const allowedMimes = [
             'image/jpeg', 'image/png', 'image/gif', 'image/webp',
             'video/mp4', 'video/webm', 'video/ogg',
@@ -151,6 +145,7 @@ const userSchema = new mongoose.Schema({
     privacyMode: { type: Boolean, default: false },
     theme: { type: String, default: 'dark' },
     chatWallpaper: { type: String, default: 'default' },
+    chatWallpapers: { type: Map, of: String, default: {} },
     fontSize: { type: String, default: 'medium' },
     language: { type: String, default: 'en' }
   }
@@ -160,7 +155,7 @@ const User = mongoose.model('User', userSchema);
 const messageSchema = new mongoose.Schema({
   chatId: { type: String, required: true },
   senderId: { type: String, required: true },
-  content: { type: String, default: '' }, // Encrypted text
+  content: { type: String, default: '' }, 
   type: { type: String, enum: ['text', 'image', 'video', 'audio'], default: 'text' },
   mediaUrl: { type: String },
   replyTo: { type: Object },
@@ -170,19 +165,19 @@ const messageSchema = new mongoose.Schema({
 const Message = mongoose.model('Message', messageSchema);
 
 const chatSchema = new mongoose.Schema({
-  participants: [{ type: String, required: true }], // User IDs
+  participants: [{ type: String, required: true }], 
   type: { type: String, default: 'private', enum: ['private', 'group'] },
-  name: { type: String }, // For groups
-  avatar: { type: String }, // For groups
-  adminIds: [{ type: String }], // For groups
+  name: { type: String }, 
+  avatar: { type: String }, 
+  adminIds: [{ type: String }], 
   lastMessage: { type: mongoose.Schema.Types.Mixed },
-  unreadCounts: { type: Map, of: Number, default: {} }, // userId -> count
+  unreadCounts: { type: Map, of: Number, default: {} }, 
   pinnedBy: [{ type: String }]
 });
 const Chat = mongoose.model('Chat', chatSchema);
 
 // --- Socket Helpers ---
-const onlineUsers = new Map(); // userId -> socketId
+const onlineUsers = new Map(); 
 
 const joinParticipantsToChat = (chat) => {
     chat.participants.forEach(p => {
@@ -224,26 +219,21 @@ app.post('/api/upload', authenticate, upload.single('file'), (req, res) => {
     
     const protocol = req.protocol;
     const host = req.get('host');
-    // Determine if we are behind a proxy (e.g. Nginx HTTPS)
     const forwardedProto = req.get('x-forwarded-proto');
     const proto = forwardedProto ? forwardedProto : protocol;
     
-    const fileUrl = `${proto}://${host}/uploads/${req.file.filename}`;
+    // Ensure we don't get double slash if host ends with /
+    const cleanHost = host.endsWith('/') ? host.slice(0, -1) : host;
+    
+    const fileUrl = `${proto}://${cleanHost}/uploads/${req.file.filename}`;
     res.json({ url: fileUrl });
 });
 
-// Auth
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
-    // Input Validation
-    if (typeof username !== 'string' || typeof password !== 'string') {
-        return res.status(400).json({ error: 'Invalid input format' });
-    }
-    if (username.length < 3 || password.length < 6) {
-        return res.status(400).json({ error: 'Username/Password too short' });
-    }
+    if (typeof username !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'Invalid input' });
+    if (username.length < 3 || password.length < 6) return res.status(400).json({ error: 'Credentials too short' });
 
     const existing = await User.findOne({ username });
     if (existing) return res.status(400).json({ error: 'Username taken' });
@@ -256,9 +246,6 @@ app.post('/api/register', async (req, res) => {
     });
     await user.save();
 
-    const count = await User.countDocuments();
-    if(count === 1) console.log(`[INFO] User ${username} is the first user.`);
-
     const token = jwt.sign({ userId: user._id }, JWT_SECRET);
     res.json({ user: mapUser(user), token });
   } catch (e) {
@@ -269,12 +256,6 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
-    // Input Validation
-    if (typeof username !== 'string' || typeof password !== 'string') {
-        return res.status(400).json({ error: 'Invalid input format' });
-    }
-
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -293,7 +274,6 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/users/update', authenticate, async (req, res) => {
   try {
-    // Prevent malicious updates
     const updates = req.body;
     delete updates.passwordHash;
     delete updates.isAdmin; 
@@ -306,11 +286,23 @@ app.post('/api/users/update', authenticate, async (req, res) => {
   }
 });
 
+app.post('/api/users/wallpaper/:chatId', authenticate, async (req, res) => {
+    try {
+        const { wallpaper } = req.body;
+        const user = await User.findById(req.userId);
+        if(!user.settings.chatWallpapers) user.settings.chatWallpapers = new Map();
+        
+        user.settings.chatWallpapers.set(req.params.chatId, wallpaper);
+        await user.save();
+        res.json(mapUser(user));
+    } catch(e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/users/block', authenticate, async (req, res) => {
     try {
         const { targetId } = req.body;
-        if(typeof targetId !== 'string') return res.status(400).json({error: 'Invalid ID'});
-
         const user = await User.findById(req.userId);
         if (!user) return res.status(404).json({error: 'User not found'});
 
@@ -329,7 +321,6 @@ app.get('/api/users/search', authenticate, async (req, res) => {
   try {
     const query = req.query.q;
     if(!query || typeof query !== 'string') return res.json([]);
-    
     const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const users = await User.find({ username: { $regex: safeQuery, $options: 'i' } }).limit(10);
     res.json(users.map(mapUser));
@@ -341,8 +332,6 @@ app.get('/api/users/search', authenticate, async (req, res) => {
 app.post('/api/users/bulk', authenticate, async (req, res) => {
   try {
     const { ids } = req.body;
-    if(!Array.isArray(ids)) return res.status(400).json({error: 'Invalid IDs'});
-    
     const users = await User.find({ _id: { $in: ids } });
     res.json(users.map(mapUser));
   } catch (e) {
@@ -356,8 +345,6 @@ app.get('/api/admin/stats', authenticate, adminOnly, async (req, res) => {
         const users = await User.countDocuments();
         const messages = await Message.countDocuments();
         const chats = await Chat.countDocuments();
-        
-        // Calculate uploads size
         let uploadSize = 0;
         if(fs.existsSync(UPLOAD_DIR)) {
              const files = fs.readdirSync(UPLOAD_DIR);
@@ -366,7 +353,6 @@ app.get('/api/admin/stats', authenticate, adminOnly, async (req, res) => {
                  uploadSize += stats.size;
              });
         }
-
         res.json({ users, messages, chats, uploadSize });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -403,46 +389,34 @@ app.post('/api/admin/users/:id/toggle-admin', authenticate, adminOnly, async (re
     }
 });
 
-// --- Group Chat Routes ---
-
-// Create Group
+// Group Routes
 app.post('/api/groups', authenticate, async (req, res) => {
     try {
         const { name, participants, avatar } = req.body;
-        
-        if(!name || !Array.isArray(participants)) return res.status(400).json({error: 'Invalid group data'});
-
-        const allParticipants = [...new Set([...participants, req.userId])]; // Dedup and add creator
-
+        const allParticipants = [...new Set([...participants, req.userId])];
         const chat = new Chat({
             type: 'group',
             name,
             avatar: avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${name}`,
             participants: allParticipants,
-            adminIds: [req.userId], // Creator is admin
+            adminIds: [req.userId],
             unreadCounts: Object.fromEntries(allParticipants.map(p => [p, 0]))
         });
-        
         await chat.save();
-        joinParticipantsToChat(chat); // Join Sockets
+        joinParticipantsToChat(chat); 
         res.json(chat);
     } catch(e) {
         res.status(500).json({error: e.message});
     }
 });
 
-// Update Group Info
 app.put('/api/groups/:id', authenticate, async (req, res) => {
     try {
         const chat = await Chat.findById(req.params.id);
-        if(!chat || chat.type !== 'group') return res.status(404).json({error: 'Group not found'});
-        
-        if(!chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Only admins can update group info'});
-
+        if(!chat || chat.type !== 'group' || !chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Access denied'});
         const { name, avatar } = req.body;
         if(name) chat.name = name;
         if(avatar) chat.avatar = avatar;
-        
         await chat.save();
         res.json(chat);
     } catch(e) {
@@ -450,28 +424,19 @@ app.put('/api/groups/:id', authenticate, async (req, res) => {
     }
 });
 
-// Add Members
 app.post('/api/groups/:id/add', authenticate, async (req, res) => {
     try {
         const { userIds } = req.body;
         const chat = await Chat.findById(req.params.id);
-        
-        if(!chat || chat.type !== 'group') return res.status(404).json({error: 'Group not found'});
-        if(!chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Only admins can add members'});
-
+        if(!chat || chat.type !== 'group' || !chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Access denied'});
         const newMembers = userIds.filter(id => !chat.participants.includes(id));
         if(newMembers.length > 0) {
             chat.participants.push(...newMembers);
             newMembers.forEach(id => chat.unreadCounts.set(id, 0));
             await chat.save();
-            
-            // Join new members' sockets to the chat room
             newMembers.forEach(id => {
                 const socketId = onlineUsers.get(id);
-                if (socketId) {
-                    const socket = io.sockets.sockets.get(socketId);
-                    if (socket) socket.join(chat._id.toString());
-                }
+                if (socketId) io.sockets.sockets.get(socketId)?.join(chat._id.toString());
             });
         }
         res.json(chat);
@@ -480,41 +445,28 @@ app.post('/api/groups/:id/add', authenticate, async (req, res) => {
     }
 });
 
-// Remove Member
 app.post('/api/groups/:id/remove', authenticate, async (req, res) => {
      try {
         const { userIdToRemove } = req.body;
         const chat = await Chat.findById(req.params.id);
-
-        if(!chat || chat.type !== 'group') return res.status(404).json({error: 'Group not found'});
-        if(!chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Only admins can remove members'});
-
+        if(!chat || chat.type !== 'group' || !chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Access denied'});
         chat.participants = chat.participants.filter(p => p !== userIdToRemove);
         chat.adminIds = chat.adminIds.filter(p => p !== userIdToRemove);
         await chat.save();
-        
-        // Make socket leave? Not strictly necessary but good practice
         const socketId = onlineUsers.get(userIdToRemove);
-        if (socketId) {
-            const socket = io.sockets.sockets.get(socketId);
-            if (socket) socket.leave(chat._id.toString());
-        }
-
+        if (socketId) io.sockets.sockets.get(socketId)?.leave(chat._id.toString());
         res.json(chat);
      } catch(e) {
          res.status(500).json({error: e.message});
      }
 });
 
-// Leave Group
 app.post('/api/groups/:id/leave', authenticate, async (req, res) => {
     try {
         const chat = await Chat.findById(req.params.id);
         if(!chat || chat.type !== 'group') return res.status(404).json({error: 'Group not found'});
-
         chat.participants = chat.participants.filter(p => p !== req.userId);
         chat.adminIds = chat.adminIds.filter(p => p !== req.userId);
-        
         await chat.save();
         res.json({success: true});
     } catch(e) {
@@ -522,8 +474,6 @@ app.post('/api/groups/:id/leave', authenticate, async (req, res) => {
     }
 });
 
-
-// Chats
 app.get('/api/chats', authenticate, async (req, res) => {
   try {
     const chats = await Chat.find({ participants: req.userId });
@@ -547,20 +497,17 @@ app.get('/api/chats', authenticate, async (req, res) => {
 app.post('/api/chats', authenticate, async (req, res) => {
   try {
     const { peerId } = req.body;
-    if(typeof peerId !== 'string') return res.status(400).json({error: 'Invalid Peer ID'});
-
     let chat = await Chat.findOne({
       participants: { $all: [req.userId, peerId] },
       type: 'private'
     });
-
     if (!chat) {
       chat = new Chat({
         participants: [req.userId, peerId],
         unreadCounts: { [req.userId]: 0, [peerId]: 0 }
       });
       await chat.save();
-      joinParticipantsToChat(chat); // Join Sockets immediately
+      joinParticipantsToChat(chat);
     }
     res.json({
       id: chat._id,
@@ -577,12 +524,9 @@ app.post('/api/chats', authenticate, async (req, res) => {
 app.post('/api/chats/:id/pin', authenticate, async (req, res) => {
     try {
         const chat = await Chat.findById(req.params.id);
-        if(!chat) return res.status(404).json({error: 'Chat not found'});
-        
         const index = chat.pinnedBy.indexOf(req.userId);
         if(index === -1) chat.pinnedBy.push(req.userId);
         else chat.pinnedBy.splice(index, 1);
-        
         await chat.save();
         res.json({ success: true });
     } catch(e) {
@@ -590,7 +534,6 @@ app.post('/api/chats/:id/pin', authenticate, async (req, res) => {
     }
 });
 
-// Messages
 app.get('/api/chats/:id/messages', authenticate, async (req, res) => {
   try {
     const messages = await Message.find({ chatId: req.params.id }).sort({ timestamp: 1 });
@@ -611,10 +554,7 @@ app.post('/api/chats/:id/read', authenticate, async (req, res) => {
             { chatId: req.params.id, senderId: { $ne: req.userId }, status: { $ne: 'read' } },
             { $set: { status: 'read' } }
         );
-        
-        // Notify room that messages have been read
         io.to(req.params.id).emit('messages_read', { chatId: req.params.id, userId: req.userId });
-
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -626,10 +566,7 @@ app.delete('/api/messages/:id', authenticate, async (req, res) => {
         const msg = await Message.findById(req.params.id);
         if(msg && msg.senderId === req.userId) {
              await Message.findByIdAndDelete(req.params.id);
-             
-             // Notify room that message was deleted
              io.to(msg.chatId).emit('message_deleted', { chatId: msg.chatId, messageId: req.params.id });
-
              res.json({ success: true });
         } else {
             res.status(403).json({ error: 'Not allowed' });
@@ -639,12 +576,10 @@ app.delete('/api/messages/:id', authenticate, async (req, res) => {
     }
 });
 
-// --- Socket.io Security & Logic ---
-
+// Socket IO
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error("Authentication error: Token required"));
-  
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     socket.userId = decoded.userId; 
@@ -656,14 +591,12 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   const userId = socket.userId; 
-  
   onlineUsers.set(userId, socket.id);
   socket.join(userId);
   
   User.findByIdAndUpdate(userId, { isOnline: true }).exec();
   io.emit('user_status', { userId, isOnline: true });
 
-  // Join all chat rooms
   Chat.find({ participants: userId }).then(chats => {
       chats.forEach(c => socket.join(c._id.toString()));
   });
@@ -676,10 +609,6 @@ io.on('connection', (socket) => {
 
   socket.on('join_chat', (chatId) => {
     if(typeof chatId === 'string') socket.join(chatId);
-  });
-
-  socket.on('leave_chat', (chatId) => {
-    socket.leave(chatId);
   });
 
   socket.on('typing', ({ chatId, isTyping }) => {
@@ -710,13 +639,8 @@ io.on('connection', (socket) => {
         });
         await chat.save();
       }
-
       const payload = { id: msg._id, ...msg.toObject() };
-      
-      // Broadcast to the room
       io.to(msgData.chatId).emit('new_message', payload);
-      
-      // Sidebar updates (unread counts)
       chat.participants.forEach(p => {
           io.to(p).emit('chat_updated', { chatId: chat._id, lastMessage: payload, unreadCount: chat.unreadCounts.get(p) });
       });
@@ -725,25 +649,33 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Group Video Call Logic
+  socket.on('join_call_room', ({ chatId }) => {
+      socket.join(`call_${chatId}`);
+      socket.to(`call_${chatId}`).emit('user_joined_call', { userId: socket.userId });
+  });
+
+  socket.on('leave_call_room', ({ chatId }) => {
+      socket.leave(`call_${chatId}`);
+      socket.to(`call_${chatId}`).emit('user_left_call', { userId: socket.userId });
+  });
+
+  socket.on('signal', (data) => {
+      io.to(data.targetId).emit('signal', {
+          senderId: socket.userId,
+          signal: data.signal
+      });
+  });
+
+  // Legacy support
   socket.on('call_offer', (data) => {
-      io.to(data.targetId).emit('call_offer', { 
-          offer: data.offer, 
-          callerId: userId 
-      });
+      io.to(data.targetId).emit('call_offer', { offer: data.offer, callerId: userId });
   });
-  
   socket.on('call_answer', (data) => {
-      io.to(data.targetId).emit('call_answer', { 
-          answer: data.answer,
-          responderId: userId
-      });
+      io.to(data.targetId).emit('call_answer', { answer: data.answer, responderId: userId });
   });
-  
   socket.on('ice_candidate', (data) => {
-      io.to(data.targetId).emit('ice_candidate', { 
-          candidate: data.candidate,
-          senderId: userId
-      });
+      io.to(data.targetId).emit('ice_candidate', { candidate: data.candidate, senderId: userId });
   });
 });
 

@@ -538,7 +538,7 @@ export default function App() {
   // New State for features
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [messageToDelete, setMessageToDelete] = useState<string | null>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -897,7 +897,7 @@ export default function App() {
                   )
               }) : (
                   // Calls View (Contacts List)
-                  Object.values(userCache).filter(u => u.id !== currentUser?.id && u.id !== GEMINI_USER.id).map(user => (
+                  (Object.values(userCache) as User[]).filter(u => u.id !== currentUser?.id && u.id !== GEMINI_USER.id).map(user => (
                       <div key={user.id} className="flex items-center justify-between gap-3 p-3 border-2 border-black dark:border-white bg-white dark:bg-black">
                            <div className="flex items-center gap-3">
                                <img src={user.avatar} className="w-12 h-12 border-2 border-black dark:border-white grayscale object-cover"/>
@@ -1051,3 +1051,4 @@ function AuthForm({ onSubmit }: { onSubmit: any }) {
         </form>
     )
 }
+    
