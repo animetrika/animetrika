@@ -580,6 +580,10 @@ app.post('/api/chats/:id/read', authenticate, async (req, res) => {
             { chatId: req.params.id, senderId: { $ne: req.userId }, status: { $ne: 'read' } },
             { $set: { status: 'read' } }
         );
+        
+        // Notify room that messages have been read
+        io.to(req.params.id).emit('messages_read', { chatId: req.params.id, userId: req.userId });
+
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -591,6 +595,10 @@ app.delete('/api/messages/:id', authenticate, async (req, res) => {
         const msg = await Message.findById(req.params.id);
         if(msg && msg.senderId === req.userId) {
              await Message.findByIdAndDelete(req.params.id);
+             
+             // Notify room that message was deleted
+             io.to(msg.chatId).emit('message_deleted', { chatId: msg.chatId, messageId: req.params.id });
+
              res.json({ success: true });
         } else {
             res.status(403).json({ error: 'Not allowed' });

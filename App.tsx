@@ -358,7 +358,6 @@ const BroadcastModal = ({ chats, userCache, onClose, onSend, lang }: { chats: Ch
          return peer;
     }).filter((u): u is User => !!u && u.id !== GEMINI_USER.id);
     
-    // Deduplicate
     const uniquePeers = Array.from(new Map(peerUsers.map(u => [u.id, u])).values());
 
     return (
@@ -548,6 +547,11 @@ export default function App() {
   const [showGroupSettingsModal, setShowGroupSettingsModal] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [userCache, setUserCache] = useState<Record<string, User>>({});
+  
+  // New State for features
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [messageToDelete, setMessageToDelete] = useState<string | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -564,6 +568,19 @@ export default function App() {
       }
   }, [currentUser]);
 
+  // Notification Permission
+  useEffect(() => {
+      if (currentUser && 'Notification' in window) {
+          Notification.requestPermission();
+      }
+  }, [currentUser]);
+
+  const sendNotification = (title: string, body: string) => {
+      if (currentUser?.settings?.notifications && 'Notification' in window && Notification.permission === 'granted') {
+          new Notification(title, { body, icon: '/icon.png' });
+      }
+  };
+
   useEffect(() => {
       const socket = getSocket();
       if(!socket || !currentUser) return;
@@ -573,11 +590,16 @@ export default function App() {
             const plainText = await CryptoService.decryptMessage(msg.content, msg.chatId);
             setMessages(prev => [...prev, { ...msg, content: plainText }]);
             Storage.markMessagesAsRead(msg.chatId, currentUser.id);
+        } else {
+             // Notify if chat not active
+             const sender = userCache[msg.senderId]?.username || 'New Message';
+             sendNotification(sender, 'Sent you a message');
         }
         loadChats(currentUser.id);
       };
 
       const onCallOffer = (data: any) => {
+          sendNotification('Incoming Call', `Call from ${userCache[data.callerId]?.username || 'User'}`);
           setActiveCall({
               id: 'incoming', callerId: data.callerId, receiverId: currentUser.id,
               status: 'ringing', isVideo: true, isMuted: false, offerSignal: data.offer
@@ -587,16 +609,46 @@ export default function App() {
       const onChatUpdated = (data: any) => {
           loadChats(currentUser.id);
       };
+      
+      const onTyping = ({ userId, chatId, isTyping }: { userId: string, chatId: string, isTyping: boolean }) => {
+          if (chatId === activeChatId && userId !== currentUser.id) {
+               setTypingUsers(prev => {
+                   const next = new Set(prev);
+                   if (isTyping) next.add(userId);
+                   else next.delete(userId);
+                   return next;
+               });
+          }
+      };
+
+      const onMessagesRead = ({ chatId }: { chatId: string }) => {
+          if (chatId === activeChatId) {
+               setMessages(prev => prev.map(m => m.status !== 'read' ? { ...m, status: 'read' } : m));
+          }
+      };
+
+      const onMessageDeleted = ({ chatId, messageId }: { chatId: string, messageId: string }) => {
+           if (chatId === activeChatId) {
+               setMessages(prev => prev.filter(m => m.id !== messageId));
+           }
+      };
 
       socket.on('new_message', onNewMessage);
       socket.on('call_offer', onCallOffer);
       socket.on('chat_updated', onChatUpdated);
+      socket.on('typing', onTyping);
+      socket.on('messages_read', onMessagesRead);
+      socket.on('message_deleted', onMessageDeleted);
+
       return () => { 
           socket.off('new_message', onNewMessage); 
           socket.off('call_offer', onCallOffer);
           socket.off('chat_updated', onChatUpdated);
+          socket.off('typing', onTyping);
+          socket.off('messages_read', onMessagesRead);
+          socket.off('message_deleted', onMessageDeleted);
       }
-  }, [currentUser, activeChatId]);
+  }, [currentUser, activeChatId, userCache]);
 
   const loadChats = async (userId: string) => {
       const c = await Storage.getChats(userId);
@@ -617,15 +669,41 @@ export default function App() {
           return m;
       }));
       setMessages(decrypted);
+      setTypingUsers(new Set()); // Reset typing
       setTimeout(() => messagesEndRef.current?.scrollIntoView(), 100);
   };
 
   useEffect(() => { if(activeChatId) loadMessages(activeChatId); }, [activeChatId]);
 
+  const handleTypingInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      setInputText(e.target.value);
+      if (activeChatId && currentUser) {
+          Storage.setTyping(activeChatId, currentUser.id, true);
+          
+          if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+          typingTimeoutRef.current = setTimeout(() => {
+              Storage.setTyping(activeChatId, currentUser.id, false);
+          }, 2000);
+      }
+  };
+
+  const handleDeleteMessage = async () => {
+      if (messageToDelete && activeChatId) {
+          await Storage.deleteMessage(activeChatId, messageToDelete);
+          // Optimistic update, though socket will confirm
+          setMessages(prev => prev.filter(m => m.id !== messageToDelete));
+          setMessageToDelete(null);
+      }
+  };
+
   const handleSendMessage = async (type: 'text'|'image'|'video'|'audio'='text', contentVal?: string, mediaUrl?: string) => {
       if (!currentUser || !activeChatId) return;
       const content = contentVal || inputText;
       if (!content && !mediaUrl) return;
+
+      // Stop typing indicator immediately
+      if(typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      Storage.setTyping(activeChatId, currentUser.id, false);
 
       let contentToSave = content;
       if(type === 'text') contentToSave = await CryptoService.encryptMessage(content, activeChatId);
@@ -734,6 +812,21 @@ export default function App() {
       {showAdminPanel && <AdminPanel onClose={() => setShowAdminPanel(false)} lang={lang} />}
       {showBroadcastModal && <BroadcastModal chats={chats} userCache={userCache} onClose={() => setShowBroadcastModal(false)} onSend={handleBroadcast} lang={lang} />}
       {showGroupCreateModal && <CreateGroupModal chats={chats} userCache={userCache} onClose={() => setShowGroupCreateModal(false)} onCreate={handleCreateGroup} />}
+      
+      {/* Delete Confirmation Modal */}
+      {messageToDelete && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white/90 dark:bg-black/90">
+              <div className="bg-white dark:bg-black border-4 border-black dark:border-white p-6 shadow-manga dark:shadow-manga-dark max-w-sm w-full">
+                  <h3 className="text-xl font-bold uppercase mb-4">Delete Message?</h3>
+                  <p className="mb-6 font-mono text-sm">This action cannot be undone.</p>
+                  <div className="flex gap-4">
+                      <button onClick={() => setMessageToDelete(null)} className="flex-1 py-2 border-2 border-black dark:border-white font-bold hover:bg-gray-100 dark:hover:bg-gray-900">CANCEL</button>
+                      <button onClick={handleDeleteMessage} className="flex-1 py-2 bg-accent text-white font-bold border-2 border-black dark:border-white hover:opacity-90">DELETE</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {showGroupSettingsModal && activeChat && currentUser && (
           <GroupSettingsModal 
             chat={activeChat} 
@@ -835,8 +928,12 @@ export default function App() {
                               <SafeText text={peer?.username || ''} />
                               {activeChat?.type === 'group' && <Edit size={16} className="opacity-50"/>}
                           </h3>
-                          <p className="text-xs font-mono border border-black dark:border-white inline-block px-1">
-                              {activeChat?.type === 'group' ? `${activeChat.participants.length} members` : (peer?.isOnline ? 'ONLINE' : 'OFFLINE')}
+                          {/* Typing Indicator / Status */}
+                          <p className="text-xs font-mono border border-black dark:border-white inline-block px-1 transition-all">
+                              {typingUsers.size > 0 
+                                  ? <span className="animate-pulse font-bold text-accent">{t('chat.typing', lang)}</span> 
+                                  : (activeChat?.type === 'group' ? `${activeChat.participants.length} members` : (peer?.isOnline ? 'ONLINE' : 'OFFLINE'))
+                              }
                           </p>
                       </div>
                   </div>
@@ -892,8 +989,13 @@ export default function App() {
                                               {isMe && (msg.status === 'read' ? <CheckCheck size={12}/> : <Check size={12}/>)}
                                           </div>
                                       </div>
-                                      {/* Reply Button */}
-                                      <button onClick={() => setReplyTo({id: msg.id, senderId: msg.senderId, senderName: 'User', content: msg.content, type: msg.type})} className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity ${isMe ? '-left-8' : '-right-8'}`}><Reply size={16}/></button>
+                                      
+                                      {/* Message Actions (Reply & Delete) */}
+                                      <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 ${isMe ? '-left-16' : '-right-8'}`}>
+                                          <button onClick={() => setReplyTo({id: msg.id, senderId: msg.senderId, senderName: 'User', content: msg.content, type: msg.type})} className="p-1 bg-white dark:bg-black border border-black dark:border-white shadow-sm hover:scale-110 transition-transform"><Reply size={14}/></button>
+                                          {isMe && <button onClick={() => setMessageToDelete(msg.id)} className="p-1 bg-white dark:bg-black border border-black dark:border-white shadow-sm hover:scale-110 transition-transform text-accent"><Trash2 size={14}/></button>}
+                                      </div>
+
                                   </div>
                               </div>
                           </React.Fragment>
@@ -915,7 +1017,8 @@ export default function App() {
                       <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => handleSendMessage(e.target.files![0].type.startsWith('image') ? 'image' : 'video', e.target.files![0].name, URL.createObjectURL(e.target.files![0]))} />
                       
                       <textarea 
-                        value={inputText} onChange={e => setInputText(e.target.value)}
+                        value={inputText} 
+                        onChange={handleTypingInput}
                         className="flex-1 bg-transparent border-2 border-black dark:border-white p-3 font-medium outline-none focus:shadow-manga-sm dark:focus:shadow-manga-sm-dark resize-none h-12 max-h-32"
                         placeholder={t('chat.start', lang)}
                       />
