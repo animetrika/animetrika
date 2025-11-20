@@ -5,144 +5,41 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Animetrika Messenger</title>
-    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Roboto:wght@400;700;900&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Roboto', 'sans-serif'],
-              comic: ['Bangers', 'cursive'],
-            },
-            colors: {
-              ink: '#000000',
-              paper: '#FFFFFF',
-              accent: '#FF0000', // Only for critical errors/record
-            },
-            boxShadow: {
-              'manga': '4px 4px 0px 0px #000000',
-              'manga-sm': '2px 2px 0px 0px #000000',
-              'manga-dark': '4px 4px 0px 0px #FFFFFF',
-              'manga-sm-dark': '2px 2px 0px 0px #FFFFFF',
-            },
-            animation: {
-              'fade-in': 'fadeIn 0.2s ease-out',
-              'slide-up': 'slideUp 0.3s ease-out',
-              'shake': 'shake 0.5s cubic-bezier(.36,.07,.19,.97) both',
-            },
-            keyframes: {
-              fadeIn: {
-                '0%': { opacity: '0' },
-                '100%': { opacity: '1' },
-              },
-              slideUp: {
-                '0%': { transform: 'translateY(20px)', opacity: '0' },
-                '100%': { transform: 'translateY(0)', opacity: '1' },
-              },
-              shake: {
-                '10%, 90%': { transform: 'translate3d(-1px, 0, 0)' },
-                '20%, 80%': { transform: 'translate3d(2px, 0, 0)' },
-                '30%, 50%, 70%': { transform: 'translate3d(-4px, 0, 0)' },
-                '40%, 60%': { transform: 'translate3d(4px, 0, 0)' }
-              }
-            }
-          }
-        }
-      }
-    </script>
-    <style>
-      /* Manga Halftone Pattern */
-      .halftone-light {
-        background-image: radial-gradient(#000000 1px, transparent 1px);
-        background-size: 10px 10px;
-      }
-      .halftone-dark {
-        background-image: radial-gradient(#FFFFFF 1px, transparent 1px);
-        background-size: 10px 10px;
-      }
-
-      /* Custom Scrollbar (Thick and Blocky) */
-      ::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
-      }
-      ::-webkit-scrollbar-track {
-        background: transparent; 
-        border-left: 2px solid currentColor;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: currentColor; 
-        border: 2px solid transparent;
-        background-clip: content-box;
-      }
-      
-      @media (max-width: 768px) {
-        ::-webkit-scrollbar {
-          display: none;
-        }
-      }
-      
-      body {
-        -webkit-tap-highlight-color: transparent;
-        overscroll-behavior-y: none;
-      }
-
-      /* Manga Range Slider */
-      input[type=range] {
-        -webkit-appearance: none; 
-        background: transparent; 
-      }
-      input[type=range]::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        border: 2px solid currentColor;
-        height: 16px;
-        width: 16px;
-        background: currentColor;
-        cursor: pointer;
-        margin-top: -6px;
-      }
-      input[type=range]::-webkit-slider-runnable-track {
-        width: 100%;
-        height: 4px;
-        cursor: pointer;
-        background: currentColor;
-      }
-    </style>
   <script type="importmap">
 {
   "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
-    "axios": "https://aistudiocdn.com/axios@^1.6.0",
-    "socket.io-client": "https://cdn.socket.io/4.7.2/socket.io.esm.min.js",
-    "cors": "https://aistudiocdn.com/cors@^2.8.5",
-    "express": "https://aistudiocdn.com/express@^5.1.0",
-    "jsonwebtoken": "https://aistudiocdn.com/jsonwebtoken@^9.0.2",
-    "socket.io": "https://aistudiocdn.com/socket.io@^4.8.1",
-    "bcryptjs": "https://aistudiocdn.com/bcryptjs@^3.0.3",
-    "http": "https://aistudiocdn.com/http@^0.0.1-security",
-    "multer": "https://aistudiocdn.com/multer@^2.0.2",
-    "mongoose": "https://aistudiocdn.com/mongoose@^8.20.0",
-    "path": "https://aistudiocdn.com/path@^0.12.7",
-    "url": "https://aistudiocdn.com/url@^0.11.4",
-    "fs": "https://aistudiocdn.com/fs@^0.0.1-security",
     "helmet": "https://aistudiocdn.com/helmet@^8.1.0",
     "express-rate-limit": "https://aistudiocdn.com/express-rate-limit@^8.2.1",
-    "xss-clean": "https://aistudiocdn.com/xss-clean@^0.1.4",
     "express-mongo-sanitize": "https://aistudiocdn.com/express-mongo-sanitize@^2.2.0",
-    "dompurify": "https://aistudiocdn.com/dompurify@^3.2.4"
+    "xss-clean": "https://aistudiocdn.com/xss-clean@^0.1.4",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
+    "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
+    "mongoose": "https://aistudiocdn.com/mongoose@^8.20.0",
+    "axios": "https://aistudiocdn.com/axios@^1.13.2",
+    "socket.io-client": "https://aistudiocdn.com/socket.io-client@^4.8.1",
+    "socket.io": "https://aistudiocdn.com/socket.io@^4.8.1",
+    "express": "https://aistudiocdn.com/express@^5.1.0",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+    "bcryptjs": "https://aistudiocdn.com/bcryptjs@^3.0.3",
+    "http": "https://aistudiocdn.com/http@^0.0.1-security",
+    "jsonwebtoken": "https://aistudiocdn.com/jsonwebtoken@^9.0.2",
+    "cors": "https://aistudiocdn.com/cors@^2.8.5",
+    "fs": "https://aistudiocdn.com/fs@^0.0.1-security",
+    "path": "https://aistudiocdn.com/path@^0.12.7",
+    "url": "https://aistudiocdn.com/url@^0.11.4",
+    "multer": "https://aistudiocdn.com/multer@^2.0.2"
   }
 }
 </script>
 </head>
   <body class="bg-paper text-ink dark:bg-ink dark:text-paper overflow-hidden selection:bg-ink selection:text-paper dark:selection:bg-paper dark:selection:text-ink">
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>
