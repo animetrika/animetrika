@@ -9,14 +9,42 @@ import jwt from 'jsonwebtoken';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import mongoSanitize from 'express-mongo-sanitize';
+import xss from 'xss-clean';
+import multer from 'multer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
+
+// SECURITY: Strict CORS Policy
+const allowedOrigins = [
+  'https://chat.nwlnd.ru', 
+  'http://localhost:3001', 
+  'http://localhost:5173',
+  'http://localhost:3000'
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true)
+    } else {
+      callback(new Error('Not allowed by CORS'))
+    }
+  },
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+
 const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] }
+  cors: corsOptions
 });
 
 // Config
@@ -24,16 +52,87 @@ const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'animetrika-secret-key-change-this';
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/animetrika';
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
-const DOMAIN = 'chat.nwlnd.ru'; // Configured Domain
 
 // Ensure upload dir exists
 if (!fs.existsSync(UPLOAD_DIR)){
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-app.use(cors());
-app.use(express.json({ limit: '50mb' })); 
+// --- Security Middleware ---
+
+// 1. Helmet with customized CSP for WebRTC and Media
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      connectSrc: ["'self'", "ws:", "wss:", "https://api.dicebear.com", "https://stun.l.google.com:19302"],
+      imgSrc: ["'self'", "data:", "blob:", "https://api.dicebear.com", "https://upload.wikimedia.org"],
+      mediaSrc: ["'self'", "data:", "blob:"],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // React scripts
+    },
+  },
+}));
+
+// 2. Data Sanitization against NoSQL Injection
+app.use(mongoSanitize());
+
+// 3. Data Sanitization against XSS
+app.use(xss());
+
+// 4. Body Parser Limit
+app.use(express.json({ limit: '1mb' })); // Reduced limit for JSON, File upload handles large data
+
+// 5. Rate Limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300, 
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', limiter);
+
+const authLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 20,
+    message: "Too many login attempts, please try again later"
+});
+app.use('/api/login', authLimiter);
+app.use('/api/register', authLimiter);
+
+// Static Files
 app.use('/uploads', express.static(UPLOAD_DIR));
+
+// Multer Setup - SECURE FILENAMES
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, UPLOAD_DIR)
+    },
+    filename: function (req, file, cb) {
+      // Security: Ignore user-provided filename to prevent path traversal
+      const ext = path.extname(file.originalname) || '.bin';
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, uniqueSuffix + ext);
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB Max Server Side
+    fileFilter: (req, file, cb) => {
+        // Strict MIME type check
+        const allowedMimes = [
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+            'video/mp4', 'video/webm', 'video/ogg',
+            'audio/mpeg', 'audio/webm', 'audio/wav', 'audio/ogg'
+        ];
+        if(allowedMimes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Invalid file type'));
+        }
+    }
+});
 
 // --- MongoDB Models ---
 
@@ -43,6 +142,7 @@ const userSchema = new mongoose.Schema({
   avatar: { type: String, default: '' },
   status: { type: String, default: 'Hey there! I am using Animetrika.' },
   blockedUsers: [{ type: String }],
+  isAdmin: { type: Boolean, default: false },
   lastSeen: { type: Number, default: Date.now },
   isOnline: { type: Boolean, default: false },
   settings: {
@@ -51,7 +151,8 @@ const userSchema = new mongoose.Schema({
     privacyMode: { type: Boolean, default: false },
     theme: { type: String, default: 'dark' },
     chatWallpaper: { type: String, default: 'default' },
-    fontSize: { type: String, default: 'medium' }
+    fontSize: { type: String, default: 'medium' },
+    language: { type: String, default: 'en' }
   }
 });
 const User = mongoose.model('User', userSchema);
@@ -70,7 +171,10 @@ const Message = mongoose.model('Message', messageSchema);
 
 const chatSchema = new mongoose.Schema({
   participants: [{ type: String, required: true }], // User IDs
-  type: { type: String, default: 'private' },
+  type: { type: String, default: 'private', enum: ['private', 'group'] },
+  name: { type: String }, // For groups
+  avatar: { type: String }, // For groups
+  adminIds: [{ type: String }], // For groups
   lastMessage: { type: mongoose.Schema.Types.Mixed },
   unreadCounts: { type: Map, of: Number, default: {} }, // userId -> count
   pinnedBy: [{ type: String }]
@@ -90,12 +194,44 @@ const authenticate = (req, res, next) => {
   }
 };
 
+const adminOnly = async (req, res, next) => {
+    try {
+        const user = await User.findById(req.userId);
+        if(!user || !user.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+        next();
+    } catch(e) {
+        res.status(500).json({ error: 'Server Error' });
+    }
+}
+
 // --- Routes ---
+
+app.post('/api/upload', authenticate, upload.single('file'), (req, res) => {
+    if(!req.file) return res.status(400).json({error: 'No file uploaded'});
+    
+    const protocol = req.protocol;
+    const host = req.get('host');
+    // Determine if we are behind a proxy (e.g. Nginx HTTPS)
+    const forwardedProto = req.get('x-forwarded-proto');
+    const proto = forwardedProto ? forwardedProto : protocol;
+    
+    const fileUrl = `${proto}://${host}/uploads/${req.file.filename}`;
+    res.json({ url: fileUrl });
+});
 
 // Auth
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password } = req.body;
+    
+    // Input Validation
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({ error: 'Invalid input format' });
+    }
+    if (username.length < 3 || password.length < 6) {
+        return res.status(400).json({ error: 'Username/Password too short' });
+    }
+
     const existing = await User.findOne({ username });
     if (existing) return res.status(400).json({ error: 'Username taken' });
 
@@ -107,6 +243,9 @@ app.post('/api/register', async (req, res) => {
     });
     await user.save();
 
+    const count = await User.countDocuments();
+    if(count === 1) console.log(`[INFO] User ${username} is the first user.`);
+
     const token = jwt.sign({ userId: user._id }, JWT_SECRET);
     res.json({ user: mapUser(user), token });
   } catch (e) {
@@ -117,6 +256,12 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+    
+    // Input Validation
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({ error: 'Invalid input format' });
+    }
+
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -135,7 +280,13 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/users/update', authenticate, async (req, res) => {
   try {
-    const user = await User.findByIdAndUpdate(req.userId, req.body, { new: true });
+    // Prevent malicious updates
+    const updates = req.body;
+    delete updates.passwordHash;
+    delete updates.isAdmin; 
+    delete updates._id;
+
+    const user = await User.findByIdAndUpdate(req.userId, updates, { new: true });
     res.json(mapUser(user));
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -145,6 +296,8 @@ app.post('/api/users/update', authenticate, async (req, res) => {
 app.post('/api/users/block', authenticate, async (req, res) => {
     try {
         const { targetId } = req.body;
+        if(typeof targetId !== 'string') return res.status(400).json({error: 'Invalid ID'});
+
         const user = await User.findById(req.userId);
         if (!user) return res.status(404).json({error: 'User not found'});
 
@@ -162,8 +315,10 @@ app.post('/api/users/block', authenticate, async (req, res) => {
 app.get('/api/users/search', authenticate, async (req, res) => {
   try {
     const query = req.query.q;
-    if(!query) return res.json([]);
-    const users = await User.find({ username: { $regex: query, $options: 'i' } }).limit(10);
+    if(!query || typeof query !== 'string') return res.json([]);
+    
+    const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const users = await User.find({ username: { $regex: safeQuery, $options: 'i' } }).limit(10);
     res.json(users.map(mapUser));
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -173,12 +328,170 @@ app.get('/api/users/search', authenticate, async (req, res) => {
 app.post('/api/users/bulk', authenticate, async (req, res) => {
   try {
     const { ids } = req.body;
+    if(!Array.isArray(ids)) return res.status(400).json({error: 'Invalid IDs'});
+    
     const users = await User.find({ _id: { $in: ids } });
     res.json(users.map(mapUser));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Admin Routes
+app.get('/api/admin/stats', authenticate, adminOnly, async (req, res) => {
+    try {
+        const users = await User.countDocuments();
+        const messages = await Message.countDocuments();
+        const chats = await Chat.countDocuments();
+        
+        // Calculate uploads size
+        let uploadSize = 0;
+        if(fs.existsSync(UPLOAD_DIR)) {
+             const files = fs.readdirSync(UPLOAD_DIR);
+             files.forEach(file => {
+                 const stats = fs.statSync(path.join(UPLOAD_DIR, file));
+                 uploadSize += stats.size;
+             });
+        }
+
+        res.json({ users, messages, chats, uploadSize });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/admin/users', authenticate, adminOnly, async (req, res) => {
+    try {
+        const users = await User.find({}, '-passwordHash').sort({ lastSeen: -1 }).limit(50);
+        res.json(users.map(mapUser));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/admin/users/:id', authenticate, adminOnly, async (req, res) => {
+    try {
+        await User.findByIdAndDelete(req.params.id);
+        await Message.deleteMany({ senderId: req.params.id });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/admin/users/:id/toggle-admin', authenticate, adminOnly, async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+        user.isAdmin = !user.isAdmin;
+        await user.save();
+        res.json(mapUser(user));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- Group Chat Routes ---
+
+// Create Group
+app.post('/api/groups', authenticate, async (req, res) => {
+    try {
+        const { name, participants, avatar } = req.body;
+        
+        if(!name || !Array.isArray(participants)) return res.status(400).json({error: 'Invalid group data'});
+
+        const allParticipants = [...new Set([...participants, req.userId])]; // Dedup and add creator
+
+        const chat = new Chat({
+            type: 'group',
+            name,
+            avatar: avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${name}`,
+            participants: allParticipants,
+            adminIds: [req.userId], // Creator is admin
+            unreadCounts: Object.fromEntries(allParticipants.map(p => [p, 0]))
+        });
+        
+        await chat.save();
+        res.json(chat);
+    } catch(e) {
+        res.status(500).json({error: e.message});
+    }
+});
+
+// Update Group Info
+app.put('/api/groups/:id', authenticate, async (req, res) => {
+    try {
+        const chat = await Chat.findById(req.params.id);
+        if(!chat || chat.type !== 'group') return res.status(404).json({error: 'Group not found'});
+        
+        if(!chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Only admins can update group info'});
+
+        const { name, avatar } = req.body;
+        if(name) chat.name = name;
+        if(avatar) chat.avatar = avatar;
+        
+        await chat.save();
+        res.json(chat);
+    } catch(e) {
+        res.status(500).json({error: e.message});
+    }
+});
+
+// Add Members
+app.post('/api/groups/:id/add', authenticate, async (req, res) => {
+    try {
+        const { userIds } = req.body;
+        const chat = await Chat.findById(req.params.id);
+        
+        if(!chat || chat.type !== 'group') return res.status(404).json({error: 'Group not found'});
+        if(!chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Only admins can add members'});
+
+        const newMembers = userIds.filter(id => !chat.participants.includes(id));
+        if(newMembers.length > 0) {
+            chat.participants.push(...newMembers);
+            newMembers.forEach(id => chat.unreadCounts.set(id, 0));
+            await chat.save();
+        }
+        res.json(chat);
+    } catch(e) {
+         res.status(500).json({error: e.message});
+    }
+});
+
+// Remove Member
+app.post('/api/groups/:id/remove', authenticate, async (req, res) => {
+     try {
+        const { userIdToRemove } = req.body;
+        const chat = await Chat.findById(req.params.id);
+
+        if(!chat || chat.type !== 'group') return res.status(404).json({error: 'Group not found'});
+        if(!chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Only admins can remove members'});
+
+        chat.participants = chat.participants.filter(p => p !== userIdToRemove);
+        chat.adminIds = chat.adminIds.filter(p => p !== userIdToRemove);
+        await chat.save();
+        res.json(chat);
+     } catch(e) {
+         res.status(500).json({error: e.message});
+     }
+});
+
+// Leave Group
+app.post('/api/groups/:id/leave', authenticate, async (req, res) => {
+    try {
+        const chat = await Chat.findById(req.params.id);
+        if(!chat || chat.type !== 'group') return res.status(404).json({error: 'Group not found'});
+
+        chat.participants = chat.participants.filter(p => p !== req.userId);
+        chat.adminIds = chat.adminIds.filter(p => p !== req.userId);
+        
+        // If no one left, delete chat? Or keep it.
+        await chat.save();
+        res.json({success: true});
+    } catch(e) {
+        res.status(500).json({error: e.message});
+    }
+});
+
 
 // Chats
 app.get('/api/chats', authenticate, async (req, res) => {
@@ -188,6 +501,9 @@ app.get('/api/chats', authenticate, async (req, res) => {
       id: c._id,
       participants: c.participants,
       type: c.type,
+      name: c.name,
+      avatar: c.avatar,
+      adminIds: c.adminIds,
       lastMessage: c.lastMessage,
       unreadCount: c.unreadCounts.get(req.userId) || 0,
       pinnedBy: c.pinnedBy
@@ -201,6 +517,8 @@ app.get('/api/chats', authenticate, async (req, res) => {
 app.post('/api/chats', authenticate, async (req, res) => {
   try {
     const { peerId } = req.body;
+    if(typeof peerId !== 'string') return res.status(400).json({error: 'Invalid Peer ID'});
+
     let chat = await Chat.findOne({
       participants: { $all: [req.userId, peerId] },
       type: 'private'
@@ -270,8 +588,13 @@ app.post('/api/chats/:id/read', authenticate, async (req, res) => {
 
 app.delete('/api/messages/:id', authenticate, async (req, res) => {
     try {
-        await Message.findByIdAndDelete(req.params.id);
-        res.json({ success: true });
+        const msg = await Message.findById(req.params.id);
+        if(msg && msg.senderId === req.userId) {
+             await Message.findByIdAndDelete(req.params.id);
+             res.json({ success: true });
+        } else {
+            res.status(403).json({ error: 'Not allowed' });
+        }
     } catch(e) {
         res.status(500).json({error: e.message});
     }
@@ -281,14 +604,13 @@ app.delete('/api/messages/:id', authenticate, async (req, res) => {
 
 const onlineUsers = new Map(); // userId -> socketId
 
-// SECURITY: Middleware for Socket Authentication
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error("Authentication error: Token required"));
   
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    socket.userId = decoded.userId; // Attach userId to socket instance
+    socket.userId = decoded.userId; 
     next();
   } catch (err) {
     next(new Error("Authentication error: Invalid token"));
@@ -296,13 +618,18 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  const userId = socket.userId; // Guaranteed by middleware
+  const userId = socket.userId; 
   
   onlineUsers.set(userId, socket.id);
   socket.join(userId);
   
   User.findByIdAndUpdate(userId, { isOnline: true }).exec();
   io.emit('user_status', { userId, isOnline: true });
+
+  // Also join all group chats this user is part of
+  Chat.find({ participants: userId }).then(chats => {
+      chats.forEach(c => socket.join(c._id.toString()));
+  });
 
   socket.on('disconnect', () => {
     onlineUsers.delete(userId);
@@ -311,7 +638,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('join_chat', (chatId) => {
-    socket.join(chatId);
+    if(typeof chatId === 'string') socket.join(chatId);
   });
 
   socket.on('leave_chat', (chatId) => {
@@ -324,34 +651,9 @@ io.on('connection', (socket) => {
 
   socket.on('send_message', async (msgData) => {
     try {
-      // HANDLE MEDIA SAVING TO DISK TO PREVENT MONGO CRASH
-      if (msgData.mediaUrl && msgData.mediaUrl.startsWith('data:')) {
-          try {
-              const matches = msgData.mediaUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-              if (matches && matches.length === 3) {
-                  const type = matches[1];
-                  const buffer = Buffer.from(matches[2], 'base64');
-                  
-                  let ext = 'bin';
-                  if(type.includes('jpeg')) ext = 'jpg';
-                  else if(type.includes('png')) ext = 'png';
-                  else if(type.includes('webm')) ext = 'webm';
-                  else if(type.includes('mp4')) ext = 'mp4';
-
-                  const fileName = `${Date.now()}-${Math.round(Math.random()*1E9)}.${ext}`;
-                  fs.writeFileSync(path.join(UPLOAD_DIR, fileName), buffer);
-                  
-                  // Replace Base64 with URL using DOMAIN
-                  msgData.mediaUrl = `http://${DOMAIN}:3001/uploads/${fileName}`;
-              }
-          } catch (err) {
-              console.error("File save error", err);
-          }
-      }
-
       const msg = new Message({
         chatId: msgData.chatId,
-        senderId: userId, // Secure: Use authenticated ID
+        senderId: userId, 
         content: msgData.content,
         type: msgData.type,
         mediaUrl: msgData.mediaUrl,
@@ -373,8 +675,11 @@ io.on('connection', (socket) => {
       }
 
       const payload = { id: msg._id, ...msg.toObject() };
+      
+      // Broadcast to the room (which includes all group participants)
       io.to(msgData.chatId).emit('new_message', payload);
       
+      // Also send sidebar update notifications to participants individually (for unread counts)
       chat.participants.forEach(p => {
           io.to(p).emit('chat_updated', { chatId: chat._id, lastMessage: payload, unreadCount: chat.unreadCounts.get(p) });
       });
@@ -383,9 +688,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // --- WebRTC Signaling ---
   socket.on('call_offer', (data) => {
-      // data: { targetId, offer }
       io.to(data.targetId).emit('call_offer', { 
           offer: data.offer, 
           callerId: userId 
@@ -393,7 +696,6 @@ io.on('connection', (socket) => {
   });
   
   socket.on('call_answer', (data) => {
-      // data: { targetId, answer }
       io.to(data.targetId).emit('call_answer', { 
           answer: data.answer,
           responderId: userId
@@ -401,7 +703,6 @@ io.on('connection', (socket) => {
   });
   
   socket.on('ice_candidate', (data) => {
-      // data: { targetId, candidate }
       io.to(data.targetId).emit('ice_candidate', { 
           candidate: data.candidate,
           senderId: userId
@@ -419,7 +720,8 @@ function mapUser(u) {
     isOnline: u.isOnline,
     lastSeen: u.lastSeen,
     blockedUsers: u.blockedUsers,
-    settings: u.settings
+    settings: u.settings,
+    isAdmin: u.isAdmin
   };
 }
 

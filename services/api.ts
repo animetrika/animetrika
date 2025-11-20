@@ -8,8 +8,10 @@ const getBaseUrl = () => {
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
         return 'http://localhost:3001';
     }
-    // Default to the VPS domain, respecting protocol (http/https)
-    return `${protocol}//chat.nwlnd.ru:3001`;
+    // In production (Nginx), API is served from the same origin /api
+    // We return an empty string so axios uses the current domain automatically,
+    // OR we return the explicit domain without port if needed for Socket.io
+    return `${protocol}//${hostname}`;
 };
 
 const BASE_URL = getBaseUrl();
@@ -42,7 +44,8 @@ export const connectSocket = (token?: string) => {
     
     socket = io(SOCKET_URL, {
         auth: { token: authToken }, // Send token for auth middleware
-        transports: ['websocket']
+        transports: ['websocket', 'polling'], // Add polling for robust Nginx fallback
+        path: '/socket.io/'
     });
 
     socket.on('connect', () => {

@@ -1,5 +1,4 @@
 
-
 export interface UserSettings {
   notifications: boolean;
   soundEnabled: boolean;
@@ -7,6 +6,7 @@ export interface UserSettings {
   theme: 'light' | 'dark';
   chatWallpaper: string; // hex color or predefined pattern id
   fontSize: 'small' | 'medium' | 'large';
+  language: 'en' | 'ru'; // New field
 }
 
 export interface User {
@@ -20,6 +20,7 @@ export interface User {
   lastSeen: number;
   blockedUsers: string[];
   settings?: UserSettings;
+  isAdmin?: boolean;
 }
 
 export interface ReplyInfo {
@@ -48,6 +49,8 @@ export interface Chat {
   type: 'private' | 'group';
   participants: string[];
   name?: string; // For groups
+  avatar?: string; // For groups
+  adminIds?: string[]; // For groups
   lastMessage?: Message;
   unreadCount: number;
   draft?: string;
@@ -62,6 +65,7 @@ export interface CallSession {
   status: 'ringing' | 'connected' | 'ended';
   isVideo: boolean;
   isMuted: boolean;
+  offerSignal?: any;
 }
 
 export interface CallLog {

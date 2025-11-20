@@ -6,7 +6,8 @@ import {
   Trash2, Check, CheckCheck, X, Lock, Camera,
   ArrowUpRight, ArrowDownLeft, PhoneMissed, Moon, Sun, ShieldOff, ShieldCheck,
   Bell, Volume2, Eye, Wallpaper, Type, Play, Pause, StopCircle,
-  Reply, Pin, PinOff, Image as ImageIcon
+  Reply, Pin, PinOff, Image as ImageIcon, Shield, Megaphone, Users, ArrowLeft, ChevronLeft, Loader2, Globe,
+  CheckSquare, Square, Edit, UserPlus, UserMinus, LogOut as LeaveIcon
 } from 'lucide-react';
 import { User, Chat, Message, CallSession, CallLog, UserSettings, ReplyInfo } from './types';
 import * as Storage from './services/storage';
@@ -14,16 +15,8 @@ import * as CryptoService from './services/cryptoService';
 import { GEMINI_USER, isGeminiUser, getGeminiResponse } from './services/gemini';
 import { CallModal } from './components/CallModal';
 import { getSocket, connectSocket } from './services/api';
-
-// --- Helper: Blob to Base64 ---
-const blobToBase64 = (blob: Blob): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-};
+import { t } from './services/i18n';
+import DOMPurify from 'dompurify';
 
 // --- Helper: Date Utilities ---
 const isSameDay = (ts1: number, ts2: number) => {
@@ -34,48 +27,68 @@ const isSameDay = (ts1: number, ts2: number) => {
            d1.getDate() === d2.getDate();
 };
 
-const formatDateSeparator = (ts: number) => {
+const formatDateSeparator = (ts: number, lang: 'en' | 'ru') => {
     const date = new Date(ts);
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    if (isSameDay(ts, today.getTime())) return "Today";
-    if (isSameDay(ts, yesterday.getTime())) return "Yesterday";
+    if (isSameDay(ts, today.getTime())) return t('chat.today', lang);
+    if (isSameDay(ts, yesterday.getTime())) return t('chat.yesterday', lang);
     
-    return date.toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' });
+    return date.toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US', { day: 'numeric', month: 'long', year: 'numeric' });
+};
+
+const SafeText = ({ text, className }: { text: string, className?: string }) => {
+    const sanitized = DOMPurify.sanitize(text, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
+    return <span className={className} dangerouslySetInnerHTML={{__html: sanitized}} />;
 };
 
 // --- Components ---
 
+// Manga Image Component
+const LazyImage = ({ src, onClick }: { src: string, onClick: () => void }) => {
+    const [loaded, setLoaded] = useState(false);
+    return (
+        <div className="relative border-2 border-black dark:border-white overflow-hidden bg-gray-100 dark:bg-gray-900 min-w-[200px] min-h-[200px] cursor-pointer group shadow-manga-sm dark:shadow-manga-sm-dark" onClick={onClick}>
+            {!loaded && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <Loader2 className="animate-spin" size={24} />
+                </div>
+            )}
+            <img 
+                src={src} 
+                loading="lazy" 
+                onLoad={() => setLoaded(true)}
+                className={`max-w-full max-h-80 object-cover transition-opacity duration-300 grayscale hover:grayscale-0 transition-all ${loaded ? 'opacity-100' : 'opacity-0'}`} 
+            />
+        </div>
+    )
+}
+
 // Lightbox Component
 const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
     return (
-        <div 
-            className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center animate-fade-in p-4"
-            onClick={onClose}
-        >
-            <button onClick={onClose} className="absolute top-4 right-4 p-3 bg-white/10 rounded-full hover:bg-white/20 text-white transition-colors">
+        <div className="fixed inset-0 z-[100] bg-white/95 dark:bg-black/95 flex items-center justify-center p-4 halftone-light dark:halftone-dark" onClick={onClose}>
+            <button onClick={onClose} className="absolute top-4 right-4 p-3 border-2 border-black dark:border-white bg-white dark:bg-black hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition-colors z-20 shadow-manga dark:shadow-manga-dark">
                 <X size={24} />
             </button>
             <img 
                 src={src} 
-                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl animate-slide-up" 
+                className="max-w-full max-h-full object-contain border-4 border-black dark:border-white shadow-manga dark:shadow-manga-dark" 
                 onClick={(e) => e.stopPropagation()}
             />
         </div>
     )
 }
 
-// M3 Switch Component
+// Manga Switch Component
 const Switch = ({ checked, onChange }: { checked: boolean, onChange: () => void }) => (
     <div 
         onClick={onChange} 
-        className={`relative w-[52px] h-[32px] rounded-full cursor-pointer border-2 transition-colors duration-200 ${checked ? 'bg-primary-DEFAULT border-primary-DEFAULT dark:bg-primary-dark dark:border-primary-dark' : 'bg-surface-variant dark:bg-surface-darkContainer border-outline-light dark:border-outline-dark'}`}
+        className={`relative w-12 h-6 border-2 border-black dark:border-white cursor-pointer transition-colors ${checked ? 'bg-black dark:bg-white' : 'bg-white dark:bg-black'}`}
     >
-        <div className={`absolute top-[4px] left-[4px] w-[20px] h-[20px] bg-white dark:bg-surface-darkContainerHigh rounded-full transition-all duration-200 shadow-sm flex items-center justify-center ${checked ? 'translate-x-[20px] w-[20px] h-[20px] dark:bg-primary-onDark' : 'translate-x-0'}`}>
-            {checked && <Check size={14} className="text-primary-DEFAULT dark:text-primary-dark" />}
-        </div>
+        <div className={`absolute top-0.5 left-0.5 w-4 h-4 border-2 border-black dark:border-white bg-white dark:bg-black transition-transform ${checked ? 'translate-x-6' : 'translate-x-0'}`}></div>
     </div>
 );
 
@@ -89,24 +102,12 @@ const AudioPlayer = ({ src }: { src: string }) => {
     useEffect(() => {
         const audio = audioRef.current;
         if (!audio) return;
-
-        const setAudioData = () => {
-            if(!isNaN(audio.duration)) setDuration(audio.duration);
-        };
-
-        const updateProgress = () => {
-            setProgress(audio.currentTime);
-        };
-
-        const onEnd = () => {
-            setIsPlaying(false);
-            setProgress(0);
-        };
-
+        const setAudioData = () => { if(!isNaN(audio.duration)) setDuration(audio.duration); };
+        const updateProgress = () => { setProgress(audio.currentTime); };
+        const onEnd = () => { setIsPlaying(false); setProgress(0); };
         audio.addEventListener('loadedmetadata', setAudioData);
         audio.addEventListener('timeupdate', updateProgress);
         audio.addEventListener('ended', onEnd);
-
         return () => {
             audio.removeEventListener('loadedmetadata', setAudioData);
             audio.removeEventListener('timeupdate', updateProgress);
@@ -116,137 +117,334 @@ const AudioPlayer = ({ src }: { src: string }) => {
 
     const togglePlay = () => {
         if (!audioRef.current) return;
-        if (isPlaying) {
-            audioRef.current.pause();
-        } else {
-            audioRef.current.play();
-        }
+        if (isPlaying) audioRef.current.pause(); else audioRef.current.play();
         setIsPlaying(!isPlaying);
     };
 
-    const formatTime = (time: number) => {
-        if (isNaN(time) || !isFinite(time)) return "0:00";
-        const min = Math.floor(time / 60);
-        const sec = Math.floor(time % 60);
-        return `${min}:${sec.toString().padStart(2, '0')}`;
-    };
-
     return (
-        <div className="flex items-center gap-3 w-full min-w-[200px] max-w-[280px] p-1">
+        <div className="flex items-center gap-3 w-full min-w-[200px] max-w-[280px] p-2 border-2 border-black dark:border-white bg-white dark:bg-black text-black dark:text-white shadow-manga-sm dark:shadow-manga-sm-dark">
             <audio ref={audioRef} src={src} preload="metadata" />
-            <button 
-                onClick={togglePlay}
-                className="w-10 h-10 rounded-full bg-primary-onContainer/10 dark:bg-white/10 flex items-center justify-center hover:bg-primary-onContainer/20 dark:hover:bg-white/20 transition-colors shrink-0"
-            >
-                {isPlaying ? <Pause size={20} /> : <Play size={20} className="ml-0.5" />}
+            <button onClick={togglePlay} className="border-2 border-black dark:border-white p-1 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition-colors">
+                {isPlaying ? <Pause size={16} /> : <Play size={16} />}
             </button>
-            <div className="flex-1 flex flex-col justify-center gap-1">
-                <input 
-                    type="range" 
-                    min={0} 
-                    max={duration || 100} 
-                    value={progress} 
-                    onChange={(e) => {
-                        const val = Number(e.target.value);
-                        if (audioRef.current) audioRef.current.currentTime = val;
-                        setProgress(val);
-                    }}
-                    className="w-full h-1 bg-primary-onContainer/20 dark:bg-white/30 rounded-full appearance-none cursor-pointer accent-primary-onContainer dark:accent-white"
-                />
-                <div className="flex justify-between text-[10px] opacity-70 font-medium px-0.5">
-                    <span>{formatTime(progress)}</span>
-                    <span>{formatTime(duration)}</span>
-                </div>
-            </div>
+            <input 
+                type="range" min={0} max={duration || 100} value={progress} 
+                onChange={(e) => { const val = Number(e.target.value); if (audioRef.current) audioRef.current.currentTime = val; setProgress(val); }}
+                className="w-full h-2 bg-gray-200 dark:bg-gray-800 border border-black dark:border-white"
+            />
         </div>
     );
 };
 
-// --- Profile Modal ---
-const ProfileModal = ({ user, onClose, onUpdate }: { user: User, onClose: () => void, onUpdate: (u: Partial<User>) => Promise<void> }) => {
-    const [username, setUsername] = useState(user.username);
-    const [status, setStatus] = useState(user.status || '');
-    const [avatar, setAvatar] = useState(user.avatar || '');
-    const [loading, setLoading] = useState(false);
+// --- Group Creation Modal ---
+const CreateGroupModal = ({ chats, userCache, onClose, onCreate }: { chats: Chat[], userCache: Record<string, User>, onClose: () => void, onCreate: (name: string, userIds: string[]) => void }) => {
+    const [selected, setSelected] = useState<string[]>([]);
+    const [groupName, setGroupName] = useState('');
+    
+    // Deduplicate peers available to add
+    const peerUsers = chats.map(c => {
+         const peerId = c.participants.find(pid => userCache[pid] && !userCache[pid].publicKey); 
+         const peer = Object.values(userCache).find(u => c.participants.includes(u.id));
+         return peer;
+    }).filter((u): u is User => !!u && u.id !== GEMINI_USER.id);
+    
+    const uniquePeers = Array.from(new Map(peerUsers.map(u => [u.id, u])).values());
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files?.[0]) {
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                if(ev.target?.result) setAvatar(ev.target.result as string);
-            }
-            reader.readAsDataURL(e.target.files[0]);
-        }
+    const toggleSelect = (id: string) => {
+        if (selected.includes(id)) setSelected(selected.filter(s => s !== id));
+        else setSelected([...selected, id]);
     };
 
-    const handleSave = async () => {
-        setLoading(true);
-        try {
-            await onUpdate({ username, status, avatar });
-            onClose();
-        } catch (e) {
-            alert("Failed to update profile");
-        } finally {
-            setLoading(false);
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/90 dark:bg-black/90 p-4">
+             <div className="bg-white dark:bg-black border-4 border-black dark:border-white w-full max-w-lg flex flex-col shadow-manga dark:shadow-manga-dark h-[80vh]">
+                 <div className="p-4 border-b-4 border-black dark:border-white bg-black text-white dark:bg-white dark:text-black flex justify-between items-center">
+                     <h2 className="text-xl font-bold uppercase tracking-widest">New Group</h2>
+                     <button onClick={onClose}><X size={24}/></button>
+                 </div>
+                 <div className="p-4 border-b-4 border-black dark:border-white">
+                     <input 
+                        value={groupName}
+                        onChange={e => setGroupName(e.target.value)}
+                        placeholder="Group Name"
+                        className="w-full bg-transparent border-2 border-black dark:border-white p-3 font-bold outline-none text-xl"
+                     />
+                 </div>
+                 <div className="flex-1 overflow-auto p-4 space-y-2">
+                     {uniquePeers.map(u => (
+                         <div key={u.id} onClick={() => toggleSelect(u.id)} className="flex items-center gap-3 p-2 border-2 border-transparent hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer">
+                             <div className="w-6 h-6 border-2 border-black dark:border-white flex items-center justify-center">
+                                 {selected.includes(u.id) && <div className="w-4 h-4 bg-black dark:bg-white"></div>}
+                             </div>
+                             <img src={u.avatar} className="w-10 h-10 border border-black dark:border-white grayscale object-cover"/>
+                             <SafeText text={u.username} className="font-bold uppercase" />
+                         </div>
+                     ))}
+                 </div>
+                 <div className="p-4 border-t-4 border-black dark:border-white">
+                     <button 
+                        onClick={() => { onCreate(groupName, selected); onClose(); }}
+                        disabled={selected.length === 0 || !groupName.trim()}
+                        className="w-full bg-black text-white dark:bg-white dark:text-black font-black py-3 uppercase disabled:opacity-50"
+                     >
+                         CREATE GROUP
+                     </button>
+                 </div>
+             </div>
+        </div>
+    )
+}
+
+// --- Group Settings Modal ---
+const GroupSettingsModal = ({ chat, currentUser, userCache, onClose, onUpdate, onAddMember, onRemoveMember, onLeave }: { chat: Chat, currentUser: User, userCache: Record<string, User>, onClose: () => void, onUpdate: (name: string) => void, onAddMember: (ids: string[]) => void, onRemoveMember: (id: string) => void, onLeave: () => void }) => {
+    const [name, setName] = useState(chat.name || '');
+    const isAdmin = chat.adminIds?.includes(currentUser.id);
+    const [isAdding, setIsAdding] = useState(false);
+    const [newUserIds, setNewUserIds] = useState<string[]>([]);
+
+    // Possible users to add (simplified: all known users from cache not in group)
+    const availableUsers = Object.values(userCache).filter(u => !chat.participants.includes(u.id));
+
+    const handleAdd = () => {
+        if(newUserIds.length > 0) {
+            onAddMember(newUserIds);
+            setIsAdding(false);
+            setNewUserIds([]);
         }
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in p-4">
-            <div className="bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh text-slate-900 dark:text-slate-100 p-6 rounded-3xl shadow-xl w-full max-w-sm relative animate-slide-up">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-normal">Edit Profile</h2>
-                    <button onClick={onClose} className="p-2 rounded-full hover:bg-surface-variant dark:hover:bg-surface-darkContainer transition-colors">
-                        <X size={24} />
-                    </button>
-                </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/90 dark:bg-black/90 p-4">
+             <div className="bg-white dark:bg-black border-4 border-black dark:border-white w-full max-w-md flex flex-col shadow-manga dark:shadow-manga-dark max-h-[90vh]">
+                 <div className="p-4 border-b-4 border-black dark:border-white bg-black text-white dark:bg-white dark:text-black flex justify-between items-center">
+                     <h2 className="text-xl font-bold uppercase tracking-widest">Group Settings</h2>
+                     <button onClick={onClose}><X size={24}/></button>
+                 </div>
+                 
+                 <div className="p-6 space-y-4 overflow-y-auto">
+                     <div className="flex justify-center">
+                         <img src={chat.avatar} className="w-24 h-24 border-4 border-black dark:border-white object-cover"/>
+                     </div>
+                     
+                     <div>
+                         <label className="font-bold text-xs uppercase block mb-1">Group Name</label>
+                         <div className="flex gap-2">
+                             <input 
+                                value={name} 
+                                onChange={e => setName(e.target.value)}
+                                disabled={!isAdmin}
+                                className="flex-1 bg-transparent border-2 border-black dark:border-white p-2 font-bold outline-none disabled:opacity-50"
+                             />
+                             {isAdmin && <button onClick={() => onUpdate(name)} className="p-2 bg-black text-white dark:bg-white dark:text-black border-2 border-transparent"><Check size={20}/></button>}
+                         </div>
+                     </div>
+
+                     <div>
+                         <div className="flex justify-between items-center mb-2">
+                            <label className="font-bold text-xs uppercase block">Members ({chat.participants.length})</label>
+                            {isAdmin && <button onClick={() => setIsAdding(!isAdding)} className="text-xs border border-black dark:border-white px-1 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black uppercase">+ Add</button>}
+                         </div>
+                         
+                         {isAdding && (
+                             <div className="mb-2 p-2 border-2 border-black dark:border-white bg-gray-100 dark:bg-gray-900">
+                                 <div className="max-h-32 overflow-y-auto mb-2">
+                                     {availableUsers.map(u => (
+                                         <div key={u.id} onClick={() => setNewUserIds(prev => prev.includes(u.id) ? prev.filter(id=>id!==u.id) : [...prev, u.id])} className="flex gap-2 items-center cursor-pointer hover:bg-white dark:hover:bg-black p-1">
+                                             <div className={`w-4 h-4 border border-black dark:border-white ${newUserIds.includes(u.id) ? 'bg-black dark:bg-white' : ''}`}></div>
+                                             <span>{u.username}</span>
+                                         </div>
+                                     ))}
+                                     {availableUsers.length === 0 && <p className="text-xs italic">No contacts to add</p>}
+                                 </div>
+                                 <button onClick={handleAdd} className="w-full bg-black text-white dark:bg-white dark:text-black text-xs py-1">CONFIRM ADD</button>
+                             </div>
+                         )}
+
+                         <div className="space-y-2 max-h-48 overflow-y-auto">
+                             {chat.participants.map(pid => {
+                                 const user = userCache[pid] || (pid === currentUser.id ? currentUser : {id:pid, username:'Unknown', avatar:''});
+                                 return (
+                                     <div key={pid} className="flex justify-between items-center p-2 border border-black dark:border-white">
+                                         <div className="flex items-center gap-2">
+                                             <img src={user.avatar} className="w-8 h-8 border border-black dark:border-white object-cover"/>
+                                             <span className="font-bold">{user.username}</span>
+                                             {chat.adminIds?.includes(pid) && <span className="text-[10px] bg-black text-white px-1">ADMIN</span>}
+                                         </div>
+                                         {isAdmin && pid !== currentUser.id && (
+                                             <button onClick={() => onRemoveMember(pid)} className="text-accent hover:bg-accent hover:text-white p-1 rounded"><UserMinus size={16}/></button>
+                                         )}
+                                     </div>
+                                 )
+                             })}
+                         </div>
+                     </div>
+
+                     <button onClick={onLeave} className="w-full border-2 border-accent text-accent font-bold py-3 uppercase hover:bg-accent hover:text-white transition-colors flex justify-center gap-2 items-center mt-4">
+                         <LeaveIcon size={20}/> Leave Group
+                     </button>
+                 </div>
+             </div>
+        </div>
+    )
+}
+
+// --- Admin Panel ---
+const AdminPanel = ({ onClose, lang }: { onClose: () => void, lang: 'en'|'ru' }) => {
+    const [users, setUsers] = useState<User[]>([]);
+    
+    useEffect(() => { Storage.getAdminUsers().then(setUsers).catch(() => onClose()); }, []);
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/90 dark:bg-black/90 p-4 font-mono">
+             <div className="bg-white dark:bg-black border-4 border-black dark:border-white w-full max-w-4xl h-[85vh] flex flex-col shadow-manga dark:shadow-manga-dark">
+                 <div className="p-4 border-b-4 border-black dark:border-white flex justify-between items-center bg-black text-white dark:bg-white dark:text-black">
+                     <h2 className="text-2xl font-bold uppercase tracking-widest">{t('admin.panel', lang)}</h2>
+                     <button onClick={onClose}><X size={24}/></button>
+                 </div>
+                 <div className="flex-1 overflow-auto p-4">
+                     <table className="w-full border-collapse text-left">
+                         <thead>
+                             <tr className="border-b-2 border-black dark:border-white text-sm uppercase">
+                                 <th className="p-2">User</th>
+                                 <th className="p-2">Status</th>
+                                 <th className="p-2">Role</th>
+                                 <th className="p-2">Action</th>
+                             </tr>
+                         </thead>
+                         <tbody>
+                             {users.map(u => (
+                                 <tr key={u.id} className="border-b border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-900">
+                                     <td className="p-2 flex items-center gap-2">
+                                         <div className="w-8 h-8 border border-black dark:border-white overflow-hidden"><img src={u.avatar} className="w-full h-full grayscale"/></div>
+                                         <SafeText text={u.username} />
+                                     </td>
+                                     <td className="p-2">{u.isOnline ? 'ONLINE' : 'OFFLINE'}</td>
+                                     <td className="p-2">{u.isAdmin ? 'ADMIN' : 'USER'}</td>
+                                     <td className="p-2 flex gap-2">
+                                         <button onClick={() => {Storage.toggleAdminStatus(u.id); onClose()}} className="border border-black dark:border-white px-2 text-xs hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition-colors">{t('admin.makeAdmin', lang)}</button>
+                                     </td>
+                                 </tr>
+                             ))}
+                         </tbody>
+                     </table>
+                 </div>
+             </div>
+        </div>
+    )
+}
+
+// --- Broadcast Modal ---
+const BroadcastModal = ({ chats, userCache, onClose, onSend, lang }: { chats: Chat[], userCache: Record<string, User>, onClose: () => void, onSend: (userIds: string[], text: string) => void, lang: 'en'|'ru' }) => {
+    const [selected, setSelected] = useState<string[]>([]);
+    const [text, setText] = useState('');
+    
+    // Get unique peers from chats
+    const peers = chats.map(c => {
+        const peerId = c.participants.find(p => p !== 'current-user-id-placeholder' && p !== GEMINI_USER.id); // Need actual user ID check in real usage, passing simple here
+        return peerId; 
+    }).filter(Boolean);
+
+    const toggleSelect = (id: string) => {
+        if (selected.includes(id)) setSelected(selected.filter(s => s !== id));
+        else setSelected([...selected, id]);
+    };
+
+    // Re-derive peers properly in the render
+    const peerUsers = chats.map(c => {
+         // We need a way to know who is 'me' to filter correctly, but since we iterate chats we can just grab the peer from userCache
+         // A hacky way is to find the user in userCache that matches a participant
+         const pId = c.participants.find(pid => userCache[pid] && !userCache[pid].publicKey); // Hack: userCache usually populated for peers
+         const peer = Object.values(userCache).find(u => c.participants.includes(u.id));
+         return peer;
+    }).filter((u): u is User => !!u && u.id !== GEMINI_USER.id);
+    
+    // Deduplicate
+    const uniquePeers = Array.from(new Map(peerUsers.map(u => [u.id, u])).values());
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/90 dark:bg-black/90 p-4">
+             <div className="bg-white dark:bg-black border-4 border-black dark:border-white w-full max-w-lg flex flex-col shadow-manga dark:shadow-manga-dark h-[80vh]">
+                 <div className="p-4 border-b-4 border-black dark:border-white bg-black text-white dark:bg-white dark:text-black flex justify-between items-center">
+                     <h2 className="text-xl font-bold uppercase tracking-widest">{t('nav.broadcast', lang)}</h2>
+                     <button onClick={onClose}><X size={24}/></button>
+                 </div>
+                 <div className="flex-1 overflow-auto p-4 space-y-2">
+                     {uniquePeers.map(u => (
+                         <div key={u.id} onClick={() => toggleSelect(u.id)} className="flex items-center gap-3 p-2 border-2 border-transparent hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer">
+                             <div className="w-6 h-6 border-2 border-black dark:border-white flex items-center justify-center">
+                                 {selected.includes(u.id) && <div className="w-4 h-4 bg-black dark:bg-white"></div>}
+                             </div>
+                             <img src={u.avatar} className="w-10 h-10 border border-black dark:border-white grayscale object-cover"/>
+                             <SafeText text={u.username} className="font-bold uppercase" />
+                         </div>
+                     ))}
+                 </div>
+                 <div className="p-4 border-t-4 border-black dark:border-white">
+                     <textarea 
+                        value={text} 
+                        onChange={e => setText(e.target.value)} 
+                        className="w-full border-2 border-black dark:border-white bg-transparent p-2 mb-2 h-20 font-bold outline-none" 
+                        placeholder={t('chat.start', lang)}
+                     />
+                     <button 
+                        onClick={() => { onSend(selected, text); onClose(); }}
+                        disabled={selected.length === 0 || !text.trim()}
+                        className="w-full bg-black text-white dark:bg-white dark:text-black font-black py-3 uppercase disabled:opacity-50"
+                     >
+                         SEND TO {selected.length}
+                     </button>
+                 </div>
+             </div>
+        </div>
+    )
+}
+
+// --- Profile Modal ---
+const ProfileModal = ({ user, onClose, onUpdate, lang }: { user: User, onClose: () => void, onUpdate: (u: Partial<User>) => Promise<void>, lang: 'en'|'ru' }) => {
+    const [username, setUsername] = useState(user.username);
+    const [status, setStatus] = useState(user.status || '');
+    const [avatar, setAvatar] = useState(user.avatar || '');
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files?.[0]) {
+            const reader = new FileReader();
+            reader.onload = (ev) => { if(ev.target?.result) setAvatar(ev.target.result as string); }
+            reader.readAsDataURL(e.target.files[0]);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/90 dark:bg-black/90 p-4 halftone-light dark:halftone-dark">
+            <div className="bg-white dark:bg-black text-black dark:text-white p-8 border-4 border-black dark:border-white shadow-manga dark:shadow-manga-dark w-full max-w-sm relative">
+                <button onClick={onClose} className="absolute top-4 right-4"><X size={24} /></button>
+                <h2 className="text-3xl font-comic mb-6 uppercase transform -rotate-2">{t('profile.edit', lang)}</h2>
                 
-                <div className="flex flex-col items-center mb-8">
-                    <div className="relative group cursor-pointer">
-                        <div className="w-28 h-28 rounded-full overflow-hidden shadow-md ring-4 ring-surface-light dark:ring-surface-dark">
-                            <img src={avatar} alt="Profile" className="w-full h-full object-cover" />
-                        </div>
-                        <label className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-full cursor-pointer">
+                <div className="flex justify-center mb-6">
+                    <div className="relative group cursor-pointer w-32 h-32 border-4 border-black dark:border-white overflow-hidden bg-gray-200">
+                        <img src={avatar} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all" />
+                        <label className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 cursor-pointer">
                             <Camera className="text-white" />
                             <input type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
                         </label>
                     </div>
                 </div>
 
-                <div className="space-y-6">
-                    <div className="relative">
-                        <input 
-                            type="text" 
-                            value={username} 
-                            onChange={e => setUsername(e.target.value)}
-                            className="peer w-full bg-transparent border border-outline-light dark:border-outline-dark rounded-md px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-primary-DEFAULT dark:focus:border-primary-dark focus:ring-1 focus:ring-primary-DEFAULT dark:focus:ring-primary-dark transition-all placeholder-transparent"
-                            placeholder="Username"
-                            id="usernameInput"
-                        />
-                        <label htmlFor="usernameInput" className="absolute left-4 -top-2.5 bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh px-1 text-xs text-slate-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-base peer-focus:-top-2.5 peer-focus:text-xs peer-focus:text-primary-DEFAULT dark:peer-focus:text-primary-dark">
-                            Username
-                        </label>
-                    </div>
-                    <div className="relative">
-                        <input 
-                            type="text" 
-                            value={status} 
-                            onChange={e => setStatus(e.target.value)}
-                            className="peer w-full bg-transparent border border-outline-light dark:border-outline-dark rounded-md px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-primary-DEFAULT dark:focus:border-primary-dark focus:ring-1 focus:ring-primary-DEFAULT dark:focus:ring-primary-dark transition-all placeholder-transparent"
-                            placeholder="Status"
-                            id="statusInput"
-                        />
-                        <label htmlFor="statusInput" className="absolute left-4 -top-2.5 bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh px-1 text-xs text-slate-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-base peer-focus:-top-2.5 peer-focus:text-xs peer-focus:text-primary-DEFAULT dark:peer-focus:text-primary-dark">
-                            Status
-                        </label>
-                    </div>
-                    
+                <div className="space-y-4">
+                    <input 
+                        type="text" value={username} onChange={e => setUsername(e.target.value)}
+                        className="w-full bg-transparent border-2 border-black dark:border-white p-3 font-bold outline-none focus:bg-gray-100 dark:focus:bg-gray-900 placeholder-gray-500"
+                        placeholder={t('auth.username', lang)}
+                    />
+                    <input 
+                        type="text" value={status} onChange={e => setStatus(e.target.value)}
+                        className="w-full bg-transparent border-2 border-black dark:border-white p-3 font-bold outline-none focus:bg-gray-100 dark:focus:bg-gray-900 placeholder-gray-500"
+                        placeholder="Status"
+                    />
                     <button 
-                        onClick={handleSave} 
-                        disabled={loading}
-                        className="w-full bg-primary-DEFAULT dark:bg-primary-dark text-white dark:text-primary-onContainer font-medium py-3 rounded-full shadow-none hover:shadow-md transition-shadow flex justify-center"
+                        onClick={() => { onUpdate({ username, status, avatar }); onClose(); }} 
+                        className="w-full bg-black text-white dark:bg-white dark:text-black font-black py-3 border-2 border-transparent hover:bg-white hover:text-black hover:border-black dark:hover:bg-black dark:hover:text-white dark:hover:border-white transition-all uppercase tracking-widest shadow-manga-sm dark:shadow-manga-sm-dark"
                     >
-                        {loading ? 'Saving...' : 'Save Changes'}
+                        {t('profile.save', lang)}
                     </button>
                 </div>
             </div>
@@ -255,10 +453,9 @@ const ProfileModal = ({ user, onClose, onUpdate }: { user: User, onClose: () => 
 }
 
 // --- Settings Modal ---
-const SettingsModal = ({ user, onClose, onUpdate }: { user: User, onClose: () => void, onUpdate: (u: Partial<User>) => Promise<void> }) => {
-    const [activeTab, setActiveTab] = useState<'notifications' | 'privacy' | 'appearance'>('notifications');
+const SettingsModal = ({ user, onClose, onUpdate, lang }: { user: User, onClose: () => void, onUpdate: (u: Partial<User>) => Promise<void>, lang: 'en'|'ru' }) => {
     const [settings, setSettings] = useState<UserSettings>(user.settings || {
-        notifications: true, soundEnabled: true, privacyMode: false, theme: 'dark', chatWallpaper: 'default', fontSize: 'medium'
+        notifications: true, soundEnabled: true, privacyMode: false, theme: 'dark', chatWallpaper: 'default', fontSize: 'medium', language: 'en'
     });
 
     const handleSettingChange = (key: keyof UserSettings, value: any) => {
@@ -267,1194 +464,489 @@ const SettingsModal = ({ user, onClose, onUpdate }: { user: User, onClose: () =>
         onUpdate({ settings: newSettings });
     };
 
-    const requestPushPermission = async () => {
-        if (!("Notification" in window)) {
-            alert("This browser does not support desktop notifications");
-            return;
-        }
-        const permission = await Notification.requestPermission();
-        if(permission === 'granted') {
-            handleSettingChange('notifications', true);
-        } else {
-            alert("Permission denied");
-            handleSettingChange('notifications', false);
-        }
-    }
-
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in p-4">
-            <div className="bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh text-slate-900 dark:text-slate-100 rounded-3xl shadow-2xl w-full max-w-2xl h-[600px] flex overflow-hidden animate-slide-up">
-                {/* Sidebar */}
-                <div className="w-1/3 bg-surface-lightContainer dark:bg-surface-darkContainer border-r border-outline-light/10 dark:border-outline-dark/20 p-4 flex flex-col">
-                    <h2 className="text-2xl font-normal mb-6 px-2">Settings</h2>
-                    <div className="space-y-2 flex-1">
-                        <button onClick={() => setActiveTab('notifications')} className={`w-full flex items-center gap-3 px-4 py-4 rounded-full transition-all ${activeTab === 'notifications' ? 'bg-secondary-container dark:bg-secondary-darkContainer text-secondary-onContainer dark:text-secondary-onDarkContainer font-medium' : 'hover:bg-surface-variant/50 dark:hover:bg-white/5'}`}>
-                            <Bell size={20} /> Notifications
-                        </button>
-                        <button onClick={() => setActiveTab('privacy')} className={`w-full flex items-center gap-3 px-4 py-4 rounded-full transition-all ${activeTab === 'privacy' ? 'bg-secondary-container dark:bg-secondary-darkContainer text-secondary-onContainer dark:text-secondary-onDarkContainer font-medium' : 'hover:bg-surface-variant/50 dark:hover:bg-white/5'}`}>
-                            <Lock size={20} /> Privacy
-                        </button>
-                        <button onClick={() => setActiveTab('appearance')} className={`w-full flex items-center gap-3 px-4 py-4 rounded-full transition-all ${activeTab === 'appearance' ? 'bg-secondary-container dark:bg-secondary-darkContainer text-secondary-onContainer dark:text-secondary-onDarkContainer font-medium' : 'hover:bg-surface-variant/50 dark:hover:bg-white/5'}`}>
-                            <Eye size={20} /> Appearance
-                        </button>
-                    </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/90 dark:bg-black/90 p-4">
+            <div className="bg-white dark:bg-black border-4 border-black dark:border-white shadow-manga dark:shadow-manga-dark w-full max-w-lg h-[80vh] flex flex-col overflow-hidden">
+                <div className="p-6 border-b-4 border-black dark:border-white bg-black text-white dark:bg-white dark:text-black flex justify-between items-center">
+                    <h2 className="text-2xl font-comic uppercase tracking-widest">{t('settings.title', lang)}</h2>
+                    <button onClick={onClose}><X size={24}/></button>
                 </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                    
+                    {/* Language */}
+                    <section>
+                        <h3 className="font-black text-lg uppercase mb-4 border-b-2 border-black dark:border-white inline-block">{t('settings.language', lang)}</h3>
+                        <div className="flex gap-4">
+                             <button onClick={() => handleSettingChange('language', 'en')} className={`flex-1 py-2 border-2 border-black dark:border-white font-bold uppercase ${settings.language === 'en' ? 'bg-black text-white dark:bg-white dark:text-black' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}>English</button>
+                             <button onClick={() => handleSettingChange('language', 'ru')} className={`flex-1 py-2 border-2 border-black dark:border-white font-bold uppercase ${settings.language === 'ru' ? 'bg-black text-white dark:bg-white dark:text-black' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}>Русский</button>
+                        </div>
+                    </section>
 
-                {/* Content */}
-                <div className="flex-1 p-8 relative overflow-y-auto">
-                    <button onClick={onClose} className="absolute top-4 right-4 p-2 rounded-full hover:bg-surface-variant dark:hover:bg-white/10">
-                        <X size={20} />
-                    </button>
+                    {/* Notifications */}
+                    <section className="space-y-4">
+                        <h3 className="font-black text-lg uppercase mb-4 border-b-2 border-black dark:border-white inline-block">{t('settings.notifications', lang)}</h3>
+                        <div className="flex justify-between items-center">
+                            <div><p className="font-bold">{t('settings.push', lang)}</p><p className="text-xs opacity-70">{t('settings.pushDesc', lang)}</p></div>
+                            <Switch checked={settings.notifications} onChange={() => handleSettingChange('notifications', !settings.notifications)} />
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <div><p className="font-bold">{t('settings.sound', lang)}</p><p className="text-xs opacity-70">{t('settings.soundDesc', lang)}</p></div>
+                            <Switch checked={settings.soundEnabled} onChange={() => handleSettingChange('soundEnabled', !settings.soundEnabled)} />
+                        </div>
+                    </section>
 
-                    {activeTab === 'notifications' && (
-                        <div className="space-y-8 animate-fade-in">
-                            <h3 className="text-2xl font-normal text-primary-DEFAULT dark:text-primary-dark mb-6">Notifications</h3>
-                            
-                            <div className="flex items-center justify-between p-4 bg-surface-light dark:bg-surface-dark rounded-2xl border border-outline-light/10 dark:border-outline-dark/10">
-                                <div className="flex items-center gap-4">
-                                    <div className="p-3 bg-secondary-container dark:bg-secondary-darkContainer rounded-full text-secondary-onContainer dark:text-secondary-onDarkContainer">
-                                        <Bell size={20} />
-                                    </div>
-                                    <div>
-                                        <p className="font-medium text-lg">Push Notifications</p>
-                                        <p className="text-sm opacity-70">Receive alerts when you are away</p>
-                                    </div>
-                                </div>
-                                <Switch 
-                                    checked={settings.notifications} 
-                                    onChange={() => {
-                                        if(!settings.notifications) requestPushPermission();
-                                        else handleSettingChange('notifications', false);
-                                    }} 
-                                />
-                            </div>
-
-                            <div className="flex items-center justify-between p-4 bg-surface-light dark:bg-surface-dark rounded-2xl border border-outline-light/10 dark:border-outline-dark/10">
-                                <div className="flex items-center gap-4">
-                                    <div className="p-3 bg-secondary-container dark:bg-secondary-darkContainer rounded-full text-secondary-onContainer dark:text-secondary-onDarkContainer">
-                                        <Volume2 size={20} />
-                                    </div>
-                                    <div>
-                                        <p className="font-medium text-lg">Sound Effects</p>
-                                        <p className="text-sm opacity-70">Play audible alerts for messages</p>
-                                    </div>
-                                </div>
-                                <Switch checked={settings.soundEnabled} onChange={() => handleSettingChange('soundEnabled', !settings.soundEnabled)} />
+                    {/* Appearance */}
+                    <section className="space-y-4">
+                        <h3 className="font-black text-lg uppercase mb-4 border-b-2 border-black dark:border-white inline-block">{t('settings.appearance', lang)}</h3>
+                         <div className="flex justify-between items-center">
+                            <div><p className="font-bold">{t('settings.wallpaper', lang)}</p></div>
+                            <div className="flex gap-2">
+                                {['default', 'bg-[url(https://www.transparenttextures.com/patterns/cubes.png)]'].map((bg, i) => (
+                                    <div key={i} onClick={() => handleSettingChange('chatWallpaper', bg)} className={`w-8 h-8 border-2 border-black dark:border-white cursor-pointer ${settings.chatWallpaper === bg ? 'bg-black dark:bg-white' : 'bg-gray-200'}`}></div>
+                                ))}
                             </div>
                         </div>
-                    )}
-
-                    {activeTab === 'privacy' && (
-                        <div className="space-y-8 animate-fade-in">
-                            <h3 className="text-2xl font-normal text-primary-DEFAULT dark:text-primary-dark mb-6">Privacy</h3>
-                            <div className="flex items-center justify-between p-4 bg-surface-light dark:bg-surface-dark rounded-2xl border border-outline-light/10 dark:border-outline-dark/10">
-                                <div className="flex items-center gap-4">
-                                    <div className="p-3 bg-secondary-container dark:bg-secondary-darkContainer rounded-full text-secondary-onContainer dark:text-secondary-onDarkContainer">
-                                        <Eye size={20} />
-                                    </div>
-                                    <div>
-                                        <p className="font-medium text-lg">Ghost Mode</p>
-                                        <p className="text-sm opacity-70">Hide online status and last seen</p>
-                                    </div>
-                                </div>
-                                <Switch checked={settings.privacyMode} onChange={() => handleSettingChange('privacyMode', !settings.privacyMode)} />
-                            </div>
-                            <div className="mt-8">
-                                <h4 className="font-medium mb-4 text-lg">Blocked Users</h4>
-                                <div className="bg-surface-light dark:bg-surface-dark rounded-2xl p-4 border border-outline-light/10 dark:border-outline-dark/10 min-h-[100px]">
-                                    {user.blockedUsers.length === 0 && <p className="text-center text-slate-400 italic mt-6">No blocked users.</p>}
-                                    <div className="space-y-2">
-                                        {user.blockedUsers.map(id => (
-                                            <div key={id} className="flex items-center justify-between bg-surface-variant/30 dark:bg-white/5 p-3 rounded-xl">
-                                                <span className="font-mono text-sm opacity-80">{id.substring(0,8)}...</span>
-                                                <span className="text-xs text-error-light dark:text-error-dark bg-error-container/30 px-2 py-1 rounded-full">Blocked</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
+                        <div className="flex justify-between items-center">
+                             <div><p className="font-bold">{t('settings.fontsize', lang)}</p></div>
+                             <div className="flex border-2 border-black dark:border-white">
+                                 {['small', 'medium', 'large'].map(s => (
+                                     <button key={s} onClick={() => handleSettingChange('fontSize', s)} className={`px-3 py-1 text-xs font-bold uppercase ${settings.fontSize === s ? 'bg-black text-white dark:bg-white dark:text-black' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}>{s[0]}</button>
+                                 ))}
+                             </div>
                         </div>
-                    )}
-
-                    {activeTab === 'appearance' && (
-                        <div className="space-y-8 animate-fade-in">
-                            <h3 className="text-2xl font-normal text-primary-DEFAULT dark:text-primary-dark mb-6">Appearance</h3>
-                            
-                            <div className="bg-surface-light dark:bg-surface-dark rounded-2xl p-6 border border-outline-light/10 dark:border-outline-dark/10">
-                                <div className="flex items-center gap-3 mb-4">
-                                    <Wallpaper className="text-primary-DEFAULT dark:text-primary-dark" />
-                                    <p className="font-medium text-lg">Chat Wallpaper</p>
-                                </div>
-                                <div className="flex gap-4 overflow-x-auto pb-2">
-                                    {['default', 'bg-gradient-to-br from-pink-200 to-purple-300', 'bg-gradient-to-tr from-slate-800 to-slate-900', 'bg-[url(https://www.transparenttextures.com/patterns/cubes.png)]'].map((bg, i) => (
-                                        <div 
-                                            key={i} 
-                                            onClick={() => handleSettingChange('chatWallpaper', bg)}
-                                            className={`w-20 h-20 rounded-2xl cursor-pointer border-4 transition-all shadow-sm hover:shadow-md shrink-0 ${settings.chatWallpaper === bg ? 'border-primary-DEFAULT dark:border-primary-dark scale-105' : 'border-transparent'} ${bg === 'default' ? 'bg-surface-variant' : bg} ${bg.startsWith('bg-[') ? 'bg-repeat opacity-80 bg-slate-100 dark:bg-slate-800' : ''}`}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="bg-surface-light dark:bg-surface-dark rounded-2xl p-6 border border-outline-light/10 dark:border-outline-dark/10">
-                                <div className="flex items-center gap-3 mb-4">
-                                    <Type className="text-primary-DEFAULT dark:text-primary-dark" />
-                                    <p className="font-medium text-lg">Font Size</p>
-                                </div>
-                                <div className="flex bg-surface-variant/50 dark:bg-surface-darkContainerHigh rounded-full p-1 w-full">
-                                    {['small', 'medium', 'large'].map((size) => (
-                                        <button
-                                            key={size}
-                                            onClick={() => handleSettingChange('fontSize', size)}
-                                            className={`flex-1 py-2 rounded-full text-sm capitalize transition-all font-medium ${settings.fontSize === size ? 'bg-white dark:bg-secondary-darkContainer shadow-sm text-primary-DEFAULT dark:text-secondary-onDarkContainer' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                                        >
-                                            {size}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    )}
+                    </section>
                 </div>
             </div>
         </div>
     )
 }
 
+// --- Main App ---
 export default function App() {
-  // --- Global State ---
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [view, setView] = useState<'auth' | 'app'>('auth');
   const [currentTab, setCurrentTab] = useState<'chats' | 'calls'>('chats');
-  const [loading, setLoading] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
-
-  // --- Chat State ---
+  const [lang, setLang] = useState<'en'|'ru'>('en');
+  
+  // Chat State
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]); // Decrypted messages
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [replyTo, setReplyTo] = useState<ReplyInfo | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showMenu, setShowMenu] = useState(false);
-  const [userCache, setUserCache] = useState<Record<string, User>>({});
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  
-  // --- Call State ---
   const [activeCall, setActiveCall] = useState<CallSession | null>(null);
-  const [callHistory, setCallHistory] = useState<CallLog[]>([]);
-  
-  // --- UI State ---
-  const [showEmoji, setShowEmoji] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [typingUsers, setTypingUsers] = useState<string[]>([]);
-  const [searchResults, setSearchResults] = useState<User[]>([]);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+  const [showGroupCreateModal, setShowGroupCreateModal] = useState(false);
+  const [showGroupSettingsModal, setShowGroupSettingsModal] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [userCache, setUserCache] = useState<Record<string, User>>({});
 
-  // --- Refs ---
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<any>(null);
-  const typingTimeoutRef = useRef<any>(null);
 
-  // --- Socket Integration ---
   useEffect(() => {
-    const socket = getSocket();
-    if (!socket || !currentUser) return;
+      if (theme === 'dark') document.documentElement.classList.add('dark');
+      else document.documentElement.classList.remove('dark');
+  }, [theme]);
 
-    // Define listeners
-    const onNewMessage = async (msg: Message) => {
+  useEffect(() => {
+      if(currentUser?.settings) {
+          setTheme(currentUser.settings.theme);
+          setLang(currentUser.settings.language || 'en');
+      }
+  }, [currentUser]);
+
+  useEffect(() => {
+      const socket = getSocket();
+      if(!socket || !currentUser) return;
+      
+      const onNewMessage = async (msg: Message) => {
         if (msg.chatId === activeChatId) {
             const plainText = await CryptoService.decryptMessage(msg.content, msg.chatId);
             setMessages(prev => [...prev, { ...msg, content: plainText }]);
             Storage.markMessagesAsRead(msg.chatId, currentUser.id);
         }
-        // Update chats list
         loadChats(currentUser.id);
-    };
+      };
 
-    const onTyping = ({ chatId, userId, isTyping }: any) => {
-        if (chatId === activeChatId && userId !== currentUser.id) {
-            setTypingUsers(prev => isTyping ? [...prev, userId] : prev.filter(id => id !== userId));
-        }
-    };
+      const onCallOffer = (data: any) => {
+          setActiveCall({
+              id: 'incoming', callerId: data.callerId, receiverId: currentUser.id,
+              status: 'ringing', isVideo: true, isMuted: false, offerSignal: data.offer
+          });
+      };
 
-    const onChatUpdated = (data: any) => {
-        loadChats(currentUser.id);
-    };
+      const onChatUpdated = (data: any) => {
+          loadChats(currentUser.id);
+      };
 
-    const onCallOffer = (data: any) => {
-        // Incoming Call!
-        const { offer, callerId } = data;
-        // Don't auto-answer in this UI, show Incoming Call UI (omitted for brevity in this fix, showing auto-accept for demo)
-        // In real app: pop up a modal "Accept/Decline"
-        // For now, we just set state to trigger the modal which handles signaling
-        setActiveCall({
-            id: 'incoming',
-            callerId: callerId,
-            receiverId: currentUser.id,
-            status: 'ringing',
-            isVideo: true, // Assume video for now
-            isMuted: false
-        });
-    };
-
-    // Attach listeners
-    socket.on('new_message', onNewMessage);
-    socket.on('typing', onTyping);
-    socket.on('chat_updated', onChatUpdated);
-    socket.on('call_offer', onCallOffer);
-
-    return () => {
-        socket.off('new_message', onNewMessage);
-        socket.off('typing', onTyping);
-        socket.off('chat_updated', onChatUpdated);
-        socket.off('call_offer', onCallOffer);
-    }
+      socket.on('new_message', onNewMessage);
+      socket.on('call_offer', onCallOffer);
+      socket.on('chat_updated', onChatUpdated);
+      return () => { 
+          socket.off('new_message', onNewMessage); 
+          socket.off('call_offer', onCallOffer);
+          socket.off('chat_updated', onChatUpdated);
+      }
   }, [currentUser, activeChatId]);
 
-  // --- Theme Effect ---
-  useEffect(() => {
-    if (theme === 'dark') {
-        document.documentElement.classList.add('dark');
-    } else {
-        document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
-
-  useEffect(() => {
-      if(currentUser && currentUser.settings) {
-          setTheme(currentUser.settings.theme);
-          if(currentUser.settings.notifications && "Notification" in window) {
-              if (Notification.permission !== "granted") {
-                 Notification.requestPermission();
-              }
-          }
-      }
-  }, [currentUser]);
-
-  const toggleTheme = () => {
-      const newTheme = theme === 'dark' ? 'light' : 'dark';
-      setTheme(newTheme);
-      if(currentUser) handleUpdateProfile({ settings: { ...currentUser.settings!, theme: newTheme } });
-  };
-
-  // --- User Cache Logic ---
-  const resolveUsers = useCallback(async (chatList: Chat[]) => {
-      const missingIds = new Set<string>();
-      
-      if (!userCache[GEMINI_USER.id]) {
-          setUserCache(prev => ({ ...prev, [GEMINI_USER.id]: GEMINI_USER as any }));
-      }
-
-      chatList.forEach(c => {
-          c.participants.forEach(p => {
-              if(!userCache[p] && p !== currentUser?.id && p !== GEMINI_USER.id) {
-                  missingIds.add(p);
-              }
-          });
-      });
-      
-      if(missingIds.size > 0) {
-          const fetchedUsers = await Storage.getUsersByIds(Array.from(missingIds));
-          setUserCache(prev => {
-              const next = { ...prev };
-              fetchedUsers.forEach(u => next[u.id] = u);
-              return next;
-          });
-      }
-  }, [userCache, currentUser]);
-
-  // --- Decryption & Load Logic ---
-  const loadMessages = useCallback(async (chatId: string) => {
-      const encryptedMsgs = await Storage.getMessages(chatId);
-      
-      // Decrypt all messages
-      const decryptedMsgs = await Promise.all(encryptedMsgs.map(async (m) => {
-          if (m.type === 'text') {
-             const plain = await CryptoService.decryptMessage(m.content, chatId);
-             return { ...m, content: plain };
-          }
-          return m;
-      }));
-      
-      setMessages(decryptedMsgs);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      if(currentUser) await Storage.markMessagesAsRead(chatId, currentUser.id);
-  }, [currentUser]);
-
-
-  // --- Polling ---
-  useEffect(() => {
-      if (!currentUser) return;
-      // We still poll chats as a backup and for friend list updates
-      const poll = async () => {
-          const fetchedChats = await Storage.getChats(currentUser.id);
-          resolveUsers(fetchedChats);
-          
-          const currentChatIds = chats.map(c => c.lastMessage?.id).join(',');
-          const newChatIds = fetchedChats.map(c => c.lastMessage?.id).join(',');
-
-          if(currentChatIds !== newChatIds) {
-               setChats(fetchedChats);
-          }
-
-          // Polling active chat for safety if socket misses
-          if (activeChatId) {
-              const encryptedMsgs = await Storage.getMessages(activeChatId);
-               if (encryptedMsgs.length > messages.length) {
-                   loadMessages(activeChatId);
-               }
-          }
-      };
-      const interval = setInterval(poll, 3000); 
-      poll();
-      return () => clearInterval(interval);
-  }, [currentUser, activeChatId, resolveUsers, chats, messages]);
-
-  // --- Auth Handlers ---
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    const form = e.target as HTMLFormElement;
-    try {
-      const u = await Storage.loginUser(form.username.value, form.password.value);
-      setCurrentUser(u);
-      setView('app');
-      loadChats(u.id);
-      setCallHistory(Storage.getCallHistory(u.id));
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    const form = e.target as HTMLFormElement;
-    try {
-      const u = await Storage.registerUser(form.username.value, form.password.value);
-      setCurrentUser(u);
-      setView('app');
-      loadChats(u.id);
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpdateProfile = async (updates: Partial<User>) => {
-      if(!currentUser) return;
-      const updated = await Storage.updateUser(currentUser.id, updates);
-      setCurrentUser(updated);
-  };
-
-  // --- Chat Logic ---
   const loadChats = async (userId: string) => {
       const c = await Storage.getChats(userId);
-      const hasGemini = c.find(chat => chat.participants.includes(GEMINI_USER.id));
-      if (!hasGemini) {
-          await Storage.createChat(userId, GEMINI_USER.id);
-          const updated = await Storage.getChats(userId);
-          setChats(updated);
-          resolveUsers(updated);
-      } else {
-          setChats(c);
-          resolveUsers(c);
+      setChats(c);
+      const missingIds = new Set<string>();
+      c.forEach(chat => chat.participants.forEach(p => { if(p !== userId && !userCache[p]) missingIds.add(p); }));
+      if(missingIds.size > 0) {
+          const users = await Storage.getUsersByIds(Array.from(missingIds));
+          setUserCache(prev => { const n = {...prev}; users.forEach(u => n[u.id] = u); return n; });
       }
   };
 
-  useEffect(() => {
-    if (activeChatId) {
-        loadMessages(activeChatId);
-        setShowMenu(false);
-        setReplyTo(null);
-        setInputText('');
-        // Join Socket Room
-        const socket = getSocket();
-        if(socket) socket.emit('join_chat', activeChatId);
-    }
-    return () => {
-        const socket = getSocket();
-        if(socket && activeChatId) socket.emit('leave_chat', activeChatId);
-    }
-  }, [activeChatId, loadMessages]);
+  const loadMessages = async (chatId: string) => {
+      const encrypted = await Storage.getMessages(chatId);
+      const decrypted = await Promise.all(encrypted.map(async m => {
+          // SECURITY: Sanitize decrypted text
+          if(m.type === 'text') return { ...m, content: DOMPurify.sanitize(await CryptoService.decryptMessage(m.content, chatId), {ALLOWED_TAGS:[], ALLOWED_ATTR:[]}) };
+          return m;
+      }));
+      setMessages(decrypted);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView(), 100);
+  };
 
-  // --- Voice Recorder ---
-  const toggleRecording = async () => {
-      if (isRecording) {
-          if (mediaRecorderRef.current) {
-              mediaRecorderRef.current.stop();
-              setIsRecording(false);
-              clearInterval(recordingTimerRef.current);
-          }
-      } else {
+  useEffect(() => { if(activeChatId) loadMessages(activeChatId); }, [activeChatId]);
+
+  const handleSendMessage = async (type: 'text'|'image'|'video'|'audio'='text', contentVal?: string, mediaUrl?: string) => {
+      if (!currentUser || !activeChatId) return;
+      const content = contentVal || inputText;
+      if (!content && !mediaUrl) return;
+
+      let contentToSave = content;
+      if(type === 'text') contentToSave = await CryptoService.encryptMessage(content, activeChatId);
+      
+      const newMessage: Message = {
+          id: crypto.randomUUID(), chatId: activeChatId, senderId: currentUser.id,
+          content: contentToSave, type, timestamp: Date.now(), status: 'sent', mediaUrl, replyTo: replyTo || undefined
+      };
+
+      setMessages(prev => [...prev, { ...newMessage, content: type === 'text' ? content : contentToSave }]);
+      setInputText(''); setReplyTo(null);
+      await Storage.sendMessage(newMessage);
+
+      // Gemini Logic
+      const chat = chats.find(c => c.id === activeChatId);
+      if(chat?.type === 'private' && chat?.participants.includes(GEMINI_USER.id)) {
           try {
-              const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-              const mediaRecorder = new MediaRecorder(stream);
-              mediaRecorderRef.current = mediaRecorder;
-              audioChunksRef.current = [];
-
-              mediaRecorder.ondataavailable = (event) => {
-                  if (event.data.size > 0) {
-                      audioChunksRef.current.push(event.data);
-                  }
-              };
-
-              mediaRecorder.onstop = async () => {
-                  const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-                  const base64Audio = await blobToBase64(audioBlob);
-                  handleSendMessage('audio', 'Voice Message', base64Audio);
-                  stream.getTracks().forEach(track => track.stop());
-              };
-
-              mediaRecorder.start();
-              setIsRecording(true);
-              setRecordingTime(0);
-              recordingTimerRef.current = setInterval(() => {
-                  setRecordingTime(prev => prev + 1);
-              }, 1000);
-
-          } catch (err) {
-              console.error("Error accessing microphone:", err);
-              alert("Could not access microphone.");
-          }
+              const responseText = await getGeminiResponse(content);
+              const enc = await CryptoService.encryptMessage(responseText, activeChatId);
+              const aiMsg: Message = { id: crypto.randomUUID(), chatId: activeChatId, senderId: GEMINI_USER.id, content: enc, type: 'text', timestamp: Date.now(), status: 'sent' };
+              await Storage.sendMessage(aiMsg);
+              setMessages(prev => [...prev, { ...aiMsg, content: responseText }]);
+          } catch(e){}
       }
   };
 
-  const handleSendMessage = async (type: 'text' | 'image' | 'video' | 'audio' = 'text', contentVal?: string, mediaUrl?: string) => {
-    if (!currentUser || !activeChatId) return;
-    const content = contentVal || inputText;
-    
-    if (!content && !mediaUrl) return;
-
-    const activeChat = chats.find(c => c.id === activeChatId);
-    if(!activeChat) return;
-
-    try {
-        // Encrypt content if text
-        let contentToSave = content;
-        if (type === 'text') {
-            contentToSave = await CryptoService.encryptMessage(content, activeChat.id);
-        }
-
-        const newMessage: Message = {
-            id: crypto.randomUUID(), // Temporary ID for optimisic UI
-            chatId: activeChatId,
-            senderId: currentUser.id,
-            content: contentToSave,
-            type,
-            timestamp: Date.now(),
-            status: 'sent',
-            mediaUrl,
-            replyTo: replyTo || undefined
-        };
-
-        // Optimistic UI update
-        const msgForUI = { ...newMessage, content: type === 'text' ? content : contentToSave };
-        setMessages(prev => [...prev, msgForUI]);
-        setInputText('');
-        setReplyTo(null);
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-
-        await Storage.sendMessage(newMessage);
-        Storage.setTyping(activeChatId, currentUser.id, false);
-
-        const peerId = activeChat.participants.find(p => p !== currentUser.id);
-        if (peerId === GEMINI_USER.id) {
-            try {
-                const responseText = await getGeminiResponse(content);
-                const encryptedResponse = await CryptoService.encryptMessage(responseText, activeChatId);
-                const aiMsg: Message = {
-                    id: crypto.randomUUID(),
-                    chatId: activeChatId,
-                    senderId: GEMINI_USER.id,
-                    content: encryptedResponse,
-                    type: 'text',
-                    timestamp: Date.now(),
-                    status: 'sent'
-                };
-                await Storage.sendMessage(aiMsg);
-                setMessages(prev => [...prev, { ...aiMsg, content: responseText }]);
-            } catch (e) {}
-        }
-    } catch (err: any) {
-        alert(err.message);
-    }
-  };
-
-  const handleReply = (msg: Message) => {
-      // Since state messages are already decrypted, we just use content
-      let senderName = "Unknown";
-      if(msg.senderId === currentUser?.id) senderName = "You";
-      else if(msg.senderId === GEMINI_USER.id) senderName = GEMINI_USER.username;
-      else if(userCache[msg.senderId]) senderName = userCache[msg.senderId].username;
-      
-      setReplyTo({
-          id: msg.id,
-          senderId: msg.senderId,
-          senderName,
-          content: msg.content, // Already decrypted in state
-          type: msg.type
-      });
-      // Focus input
-      const textarea = document.querySelector('textarea');
-      if(textarea) textarea.focus();
-  }
-
-  const handleDeleteMessage = async (msgId: string) => {
-      if(!activeChatId) return;
-      if(window.confirm("Delete for everyone?")) {
-          await Storage.deleteMessage(activeChatId, msgId);
-          setMessages(prev => prev.filter(m => m.id !== msgId));
-      }
-  }
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if(file) {
-          // Backend now handles limits better, but keep basic check
-          if(file.size > 50 * 1024 * 1024) { 
-              alert("File too large (Max 50MB)");
-              return;
-          }
-          const reader = new FileReader();
-          reader.onload = (evt) => {
-              const base64 = evt.target?.result as string;
-              const type = file.type.startsWith('image') ? 'image' : file.type.startsWith('video') ? 'video' : 'text'; 
-              handleSendMessage(type as any, file.name, base64);
-          };
-          reader.readAsDataURL(file);
-      }
-  }
-
-  const toggleBlock = async () => {
-      if(!currentUser || !activeChatId) return;
-      const chat = chats.find(c => c.id === activeChatId);
-      const peerId = chat?.participants.find(p => p !== currentUser.id);
-      if(!peerId || peerId === GEMINI_USER.id) return;
-
-      const updatedUser = await Storage.toggleBlockUser(currentUser.id, peerId);
-      setCurrentUser(updatedUser);
-      setShowMenu(false);
-  }
-
-  const togglePin = async () => {
-      if(!currentUser || !activeChatId) return;
-      const newChats = await Storage.togglePinChat(activeChatId, currentUser.id);
-      setChats(newChats);
-      setShowMenu(false);
-  }
-
-  const startCall = (video: boolean) => {
-      if(!currentUser || !activeChatId) return;
-      const chat = chats.find(c => c.id === activeChatId);
-      if(!chat) return;
-      
-      const peerId = chat.participants.find(p => p !== currentUser.id) || 'unknown';
-      if(currentUser.blockedUsers.includes(peerId)) {
-          alert("You have blocked this user. Unblock to call.");
-          return;
-      }
-
-      setActiveCall({
-          id: crypto.randomUUID(),
-          callerId: currentUser.id,
-          receiverId: peerId,
-          status: 'connected', 
-          isVideo: video,
-          isMuted: false
-      });
-  };
-
-  const endCall = () => {
-      if(activeCall && currentUser) {
-          const activeChat = chats.find(c => c.id === activeChatId);
-          const peerInfo = activeChat ? getPeerInfo(activeChat) : {name: 'Unknown', avatar: ''};
-          
-          const log: CallLog = {
-              id: crypto.randomUUID(),
-              peerId: activeCall.receiverId,
-              peerName: peerInfo.name,
-              peerAvatar: peerInfo.avatar,
-              direction: 'outgoing',
-              type: activeCall.isVideo ? 'video' : 'audio',
-              status: 'completed',
-              timestamp: Date.now(),
-              duration: 0 
-          };
-          Storage.addCallLog(currentUser.id, log);
-          setCallHistory(prev => [log, ...prev]);
-      }
-      setActiveCall(null);
-  };
-
-  const executeSearch = async (q: string) => {
-      setSearchQuery(q);
-      if(q.length > 1) {
-          const res = await Storage.searchUsers(q);
-          if ("gemini".includes(q.toLowerCase())) res.push(GEMINI_USER as any);
-          setSearchResults(res);
-      } else {
-          setSearchResults([]);
-      }
-  }
-
-  const startChatWith = async (user: User) => {
+  const handleBroadcast = async (userIds: string[], text: string) => {
       if(!currentUser) return;
-      const chat = await Storage.createChat(currentUser.id, user.id);
-      if(!chats.find(c => c.id === chat.id)) {
-          setChats([...chats, chat]);
+      for(const peerId of userIds) {
+          let chat = chats.find(c => c.participants.includes(peerId) && c.type === 'private');
+          if(!chat) {
+              chat = await Storage.createChat(currentUser.id, peerId);
+          }
+          const encrypted = await CryptoService.encryptMessage(text, chat.id);
+          const msg: Message = {
+              id: crypto.randomUUID(), chatId: chat.id, senderId: currentUser.id,
+              content: encrypted, type: 'text', timestamp: Date.now(), status: 'sent'
+          };
+          await Storage.sendMessage(msg);
       }
-      setUserCache(prev => ({...prev, [user.id]: user}));
-      setActiveChatId(chat.id);
-      setCurrentTab('chats');
-      setSearchQuery('');
-      setSearchResults([]);
+      loadChats(currentUser.id);
+  };
+  
+  const handleCreateGroup = async (name: string, userIds: string[]) => {
+      if(!currentUser) return;
+      await Storage.createGroup(name, userIds);
+      loadChats(currentUser.id);
+  }
+
+  const handleAuth = async (e: React.FormEvent, isRegister: boolean) => {
+      e.preventDefault();
+      const form = e.target as HTMLFormElement;
+      try {
+          const u = isRegister 
+            ? await Storage.registerUser(form.username.value, form.password.value)
+            : await Storage.loginUser(form.username.value, form.password.value);
+          setCurrentUser(u); setView('app'); loadChats(u.id);
+      } catch (e: any) { alert(e.message); }
   };
 
   const getPeerInfo = (chat: Chat) => {
-      if(!currentUser) return { name: 'Unknown', avatar: '', online: false, status: '' };
-      const peerId = chat.participants.find(p => p !== currentUser.id);
-      
-      if (peerId === GEMINI_USER.id) return { 
-          name: GEMINI_USER.username, 
-          avatar: GEMINI_USER.avatar, 
-          online: true,
-          status: "Always here to help!"
-      };
-
-      if (peerId && userCache[peerId]) {
-          const u = userCache[peerId];
-          const isOnline = u.settings?.privacyMode ? false : u.isOnline;
+      if(chat.type === 'group') {
           return {
-              name: u.username,
-              avatar: u.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`,
-              online: isOnline,
-              status: u.status || ""
+              id: chat.id,
+              username: chat.name || 'Group Chat',
+              avatar: chat.avatar || 'https://api.dicebear.com/7.x/initials/svg?seed=Group',
+              isOnline: true 
           };
       }
-
-      return { 
-          name: `User ${peerId?.substring(0,4)}...`, 
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${peerId}`,
-          online: false,
-          status: "Loading..." 
-      };
-  };
+      const peerId = chat.participants.find(p => p !== currentUser?.id);
+      if(peerId === GEMINI_USER.id) return GEMINI_USER;
+      return userCache[peerId!] || { id: peerId || 'unknown', username: 'Loading...', avatar: '', isOnline: false };
+  }
 
   if (view === 'auth') {
       return (
-          <div className="min-h-screen bg-surface-light dark:bg-surface-dark flex items-center justify-center p-4 relative overflow-hidden">
-              <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-primary-container/40 rounded-full blur-3xl animate-pulse"></div>
-              <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-primary-darkContainer/30 rounded-full blur-3xl animate-pulse"></div>
-              
-              <div className="bg-surface-lightContainerHigh/60 dark:bg-surface-darkContainerHigh/60 backdrop-blur-xl border border-outline-light/20 dark:border-outline-dark/20 p-10 rounded-[32px] shadow-2xl w-full max-w-md z-10">
-                  <div className="text-center mb-10">
-                      <h1 className="text-4xl font-bold text-primary-DEFAULT dark:text-primary-dark">Animetrika</h1>
-                      <p className="text-slate-500 dark:text-slate-400 mt-2 font-medium">Secure. Material. Private.</p>
+          <div className="min-h-screen bg-white dark:bg-black flex items-center justify-center p-6 halftone-light dark:halftone-dark">
+              <div className="bg-white dark:bg-black border-4 border-black dark:border-white shadow-manga dark:shadow-manga-dark p-10 w-full max-w-md relative overflow-hidden">
+                  <div className="absolute -top-10 -right-10 w-32 h-32 bg-black dark:bg-white transform rotate-45"></div>
+                  <div className="text-center mb-10 relative z-10">
+                      <h1 className="text-6xl font-comic uppercase text-black dark:text-white transform -rotate-3 mb-2 drop-shadow-[4px_4px_0_rgba(128,128,128,1)]">{t('app.name', 'en')}</h1>
+                      <p className="font-mono font-bold bg-black text-white dark:bg-white dark:text-black inline-block px-2 transform rotate-1">{t('app.slogan', 'en')}</p>
                   </div>
-
-                  <LoginForm onLogin={handleLogin} onRegister={handleRegister} loading={loading} />
-                  
-                  <button onClick={toggleTheme} className="mt-6 mx-auto block p-2 rounded-full hover:bg-surface-variant dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-300">
-                      {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-                  </button>
+                  <AuthForm onSubmit={handleAuth} />
+                  <div className="mt-8 flex justify-center">
+                       <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className="p-2 border-2 border-black dark:border-white hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full">
+                           {theme === 'dark' ? <Sun/> : <Moon/>}
+                       </button>
+                  </div>
               </div>
           </div>
       )
   }
 
-  const activeChatObj = chats.find(c => c.id === activeChatId);
-  const activePeerId = activeChatObj?.participants.find(p => p !== currentUser?.id);
-  const activePeer = activeChatObj ? getPeerInfo(activeChatObj) : null;
-  const isBlockedPeer = activePeerId ? currentUser?.blockedUsers.includes(activePeerId) : false;
-  const isPinned = activeChatObj?.pinnedBy?.includes(currentUser?.id || '');
-  
-  const fontSizeClass = currentUser?.settings?.fontSize === 'small' ? 'text-sm' : currentUser?.settings?.fontSize === 'large' ? 'text-lg' : 'text-base';
-  const wallpaperClass = currentUser?.settings?.chatWallpaper === 'default' ? '' : currentUser?.settings?.chatWallpaper;
+  const activeChat = chats.find(c => c.id === activeChatId);
+  const peer = activeChat ? getPeerInfo(activeChat) : null;
+  const fontSizeClass = currentUser?.settings?.fontSize === 'small' ? 'text-sm' : currentUser?.settings?.fontSize === 'large' ? 'text-xl' : 'text-base';
 
   return (
-    <div className={`flex h-screen w-full bg-surface-light dark:bg-surface-dark transition-colors duration-300 ${fontSizeClass}`}>
+    <div className={`flex h-[100dvh] w-full bg-white dark:bg-black text-black dark:text-white overflow-hidden ${fontSizeClass}`}>
       {activeCall && currentUser && (
-          <CallModal 
-            session={activeCall} 
-            onEnd={endCall} 
-            peerName={activePeer?.name || 'Unknown'}
-            currentUserId={currentUser.id}
+          <CallModal session={activeCall} onEnd={() => setActiveCall(null)} peerName={getPeerInfo(chats.find(c => c.participants.includes(activeCall.callerId === currentUser.id ? activeCall.receiverId : activeCall.callerId))!).username} currentUserId={currentUser.id} />
+      )}
+      {showProfileModal && currentUser && <ProfileModal user={currentUser} onClose={() => setShowProfileModal(false)} onUpdate={async (u) => { const n = await Storage.updateUser(currentUser.id, u); setCurrentUser(n); }} lang={lang} />}
+      {showSettingsModal && currentUser && <SettingsModal user={currentUser} onClose={() => setShowSettingsModal(false)} onUpdate={async (u) => { const n = await Storage.updateUser(currentUser.id, u); setCurrentUser(n); }} lang={lang} />}
+      {showAdminPanel && <AdminPanel onClose={() => setShowAdminPanel(false)} lang={lang} />}
+      {showBroadcastModal && <BroadcastModal chats={chats} userCache={userCache} onClose={() => setShowBroadcastModal(false)} onSend={handleBroadcast} lang={lang} />}
+      {showGroupCreateModal && <CreateGroupModal chats={chats} userCache={userCache} onClose={() => setShowGroupCreateModal(false)} onCreate={handleCreateGroup} />}
+      {showGroupSettingsModal && activeChat && currentUser && (
+          <GroupSettingsModal 
+            chat={activeChat} 
+            currentUser={currentUser}
+            userCache={userCache}
+            onClose={() => setShowGroupSettingsModal(false)} 
+            onUpdate={async (name) => { await Storage.updateGroupInfo(activeChat.id, name); loadChats(currentUser.id); }}
+            onAddMember={async (ids) => { await Storage.addGroupMembers(activeChat.id, ids); loadChats(currentUser.id); }}
+            onRemoveMember={async (id) => { await Storage.removeGroupMember(activeChat.id, id); loadChats(currentUser.id); }}
+            onLeave={async () => { await Storage.leaveGroup(activeChat.id); setActiveChatId(null); setShowGroupSettingsModal(false); loadChats(currentUser.id); }}
           />
       )}
-
-      {showProfileModal && currentUser && (
-          <ProfileModal 
-            user={currentUser} 
-            onClose={() => setShowProfileModal(false)} 
-            onUpdate={handleUpdateProfile} 
-          />
-      )}
-
-      {showSettingsModal && currentUser && (
-          <SettingsModal 
-            user={currentUser} 
-            onClose={() => setShowSettingsModal(false)} 
-            onUpdate={handleUpdateProfile} 
-          />
-      )}
-
       {lightboxSrc && <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
 
-      {/* Navigation Rail */}
-      <nav className="w-20 flex flex-col items-center py-8 bg-surface-lightContainer dark:bg-surface-darkContainer border-r border-outline-light/10 dark:border-outline-dark/10 shrink-0 z-20">
-         <div className="mb-8">
-            <button className="w-12 h-12 rounded-2xl bg-primary-container dark:bg-primary-darkContainer text-primary-onContainer dark:text-primary-onDarkContainer flex items-center justify-center shadow-md hover:shadow-lg transition-all">
-                <span className="font-bold text-lg">A</span>
-            </button>
-         </div>
-         
-         <div className="flex-1 flex flex-col gap-8 w-full items-center">
-             <NavButton 
-                active={currentTab === 'chats'} 
-                onClick={() => { setCurrentTab('chats'); setActiveChatId(null); }} 
-                icon={<MessageCircle size={24} />} 
-                label="Chats"
-             />
-             <NavButton 
-                active={currentTab === 'calls'} 
-                onClick={() => { setCurrentTab('calls'); setActiveChatId(null); }} 
-                icon={<Phone size={24} />} 
-                label="Calls"
-             />
-         </div>
-
-         <div className="flex flex-col gap-6 items-center">
-            <button onClick={() => setShowSettingsModal(true)} className="p-3 rounded-full hover:bg-surface-variant dark:hover:bg-white/10 transition-all text-slate-600 dark:text-slate-400">
-                <Settings size={24} />
-            </button>
-            <button onClick={() => setShowProfileModal(true)} className="p-1 rounded-full border-2 border-transparent hover:border-primary-DEFAULT transition-all">
-                <img src={currentUser?.avatar} className="w-8 h-8 rounded-full object-cover" />
-            </button>
-            <button onClick={() => setView('auth')} className="p-3 text-error-light dark:text-error-dark hover:bg-error-light/10 rounded-full transition-colors">
-                <LogOut size={24} />
-            </button>
-         </div>
-      </nav>
-
-      {/* List View */}
-      <div className={`${activeChatId ? 'hidden md:flex' : 'flex'} w-full md:w-80 lg:w-96 flex-col border-r border-outline-light/10 dark:border-outline-dark/10 bg-surface-light dark:bg-surface-dark transition-all`}>
-          <div className="p-4 pb-2">
-              <h2 className="text-[22px] font-normal mb-4 text-slate-900 dark:text-slate-100 animate-fade-in capitalize pl-2">{currentTab}</h2>
+      {/* Sidebar */}
+      <div className={`w-full md:w-96 flex flex-col border-r-4 border-black dark:border-white ${activeChatId ? 'hidden md:flex' : 'flex'}`}>
+          <div className="p-4 border-b-4 border-black dark:border-white bg-white dark:bg-black z-10">
+              <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-3xl font-comic uppercase tracking-tighter">{t('app.name', lang)}</h2>
+                  <div className="flex gap-2">
+                      <button onClick={() => setShowGroupCreateModal(true)} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black" title="Create Group"><Users size={20}/></button>
+                      <button onClick={() => setShowBroadcastModal(true)} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black" title="Broadcast"><Megaphone size={20}/></button>
+                      {currentUser?.isAdmin && <button onClick={() => setShowAdminPanel(true)} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black"><Shield size={20}/></button>}
+                      <button onClick={() => setShowSettingsModal(true)} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black"><Settings size={20}/></button>
+                      <div onClick={() => setShowProfileModal(true)} className="w-10 h-10 border-2 border-black dark:border-white overflow-hidden cursor-pointer hover:opacity-80"><img src={currentUser?.avatar} className="w-full h-full object-cover grayscale"/></div>
+                  </div>
+              </div>
               
-              <div className="relative mb-2 group">
-                  <Search className="absolute left-4 top-3.5 text-slate-500 group-focus-within:text-primary-DEFAULT transition-colors" size={20} />
+              <div className="flex gap-2 mb-4">
+                  <button onClick={() => setCurrentTab('chats')} className={`flex-1 py-2 font-black uppercase border-2 border-black dark:border-white ${currentTab === 'chats' ? 'bg-black text-white dark:bg-white dark:text-black' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}>{t('nav.chats', lang)}</button>
+                  <button onClick={() => setCurrentTab('calls')} className={`flex-1 py-2 font-black uppercase border-2 border-black dark:border-white ${currentTab === 'calls' ? 'bg-black text-white dark:bg-white dark:text-black' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}>{t('nav.calls', lang)}</button>
+              </div>
+
+              <div className="relative">
+                  <Search className="absolute left-3 top-3" size={20}/>
                   <input 
-                    type="text" 
-                    placeholder="Search" 
-                    className="w-full bg-surface-variant/50 dark:bg-surface-darkContainerHigh text-slate-900 dark:text-slate-100 pl-12 pr-4 py-3 rounded-full focus:outline-none focus:bg-surface-variant dark:focus:bg-surface-darkContainer transition-all placeholder-slate-500"
-                    value={searchQuery}
-                    onChange={(e) => executeSearch(e.target.value)}
+                    value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                    placeholder={t('search.placeholder', lang)}
+                    className="w-full bg-transparent border-2 border-black dark:border-white pl-10 pr-4 py-2 font-bold outline-none focus:shadow-manga-sm dark:focus:shadow-manga-sm-dark transition-shadow placeholder-gray-500"
                   />
               </div>
           </div>
-
-          {searchResults.length > 0 ? (
-              <div className="flex-1 overflow-y-auto px-2 pb-4">
-                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-2 ml-4 mt-2">Search Results</h4>
-                 {searchResults.map(u => (
-                     <div key={u.id} onClick={() => startChatWith(u)} className="flex items-center gap-4 p-3 rounded-full hover:bg-surface-variant/50 dark:hover:bg-white/5 cursor-pointer animate-fade-in mx-2">
-                         <img src={u.avatar} className="w-10 h-10 rounded-full object-cover" />
-                         <span className="font-medium text-slate-900 dark:text-white">{u.username}</span>
-                     </div>
-                 ))}
-              </div>
-          ) : currentTab === 'chats' ? (
-             <div className="flex-1 overflow-y-auto px-2">
-                 {chats.map(chat => {
-                     const peer = getPeerInfo(chat);
-                     const isActive = chat.id === activeChatId;
-                     const typing = Storage.getTypingUsers(chat.id).some(id => id !== currentUser?.id);
-                     const isPinned = chat.pinnedBy?.includes(currentUser?.id || '');
-
-                     return (
-                        <div 
-                            key={chat.id}
-                            onClick={() => setActiveChatId(chat.id)}
-                            className={`flex items-center gap-4 p-3 mb-1 rounded-full cursor-pointer transition-all duration-200 mx-2 group relative ${isActive ? 'bg-secondary-container dark:bg-secondary-darkContainer' : 'hover:bg-surface-variant/30 dark:hover:bg-white/5'} ${isPinned ? 'bg-surface-variant/20 dark:bg-white/5' : ''}`}
-                        >
-                            <div className="relative shrink-0">
-                                <img src={peer.avatar} className="w-12 h-12 rounded-full object-cover bg-surface-variant" />
-                                {peer.online && <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-surface-light dark:border-surface-dark rounded-full"></div>}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="flex justify-between items-baseline mb-0.5">
-                                    <h4 className={`font-medium truncate text-base flex items-center gap-1.5 ${isActive ? 'text-secondary-onContainer dark:text-secondary-onDarkContainer' : 'text-slate-900 dark:text-slate-100'}`}>
-                                        {isPinned && <Pin size={12} className="rotate-45 text-primary-DEFAULT" fill="currentColor"/>}
-                                        {peer.name}
-                                    </h4>
-                                    {chat.lastMessage && <span className="text-[11px] opacity-70 font-medium">{new Date(chat.lastMessage.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>}
-                                </div>
-                                <p className="text-sm opacity-70 truncate h-5">
-                                    {typing ? (
-                                        <span className="text-primary-DEFAULT dark:text-primary-dark font-medium animate-pulse">typing...</span>
-                                    ) : chat.lastMessage ? (
-                                        <span className="flex items-center gap-1">
-                                            {chat.lastMessage.senderId === currentUser?.id && (
-                                                chat.lastMessage.status === 'read' ? <CheckCheck size={14} className="text-primary-DEFAULT" /> : <CheckCheck size={14} />
-                                            )}
-                                            {chat.lastMessage.type === 'text' ? (chat.lastMessage.content.includes(':') ? '🔒 Encrypted Message' : chat.lastMessage.content) : `[${chat.lastMessage.type}]`}
-                                        </span>
-                                    ) : 'Start a conversation'}
-                                </p>
-                            </div>
-                            {chat.unreadCount > 0 && (
-                                <div className="bg-primary-DEFAULT dark:bg-primary-dark text-white text-xs font-bold h-5 min-w-[1.25rem] px-1.5 flex items-center justify-center rounded-full shadow-sm">
-                                    {chat.unreadCount}
-                                </div>
-                            )}
-                        </div>
-                     );
-                 })}
-             </div>
-          ) : (
-             <div className="flex-1 overflow-y-auto px-2">
-                 {callHistory.length === 0 && <div className="text-center text-slate-500 mt-10">No calls yet</div>}
-                 {callHistory.map(call => (
-                     <div key={call.id} className="flex items-center gap-4 p-3 mb-1 rounded-full hover:bg-surface-variant/30 dark:hover:bg-white/5 transition-colors mx-2">
-                         <div className="relative shrink-0">
-                             <img src={call.peerAvatar} className="w-10 h-10 rounded-full object-cover" />
-                             <div className={`absolute -bottom-1 -right-1 p-0.5 rounded-full border-2 border-surface-light dark:border-surface-dark ${call.status === 'missed' ? 'bg-error-light text-white' : 'bg-emerald-100 text-emerald-600'}`}>
-                                 {call.status === 'missed' ? <PhoneMissed size={10} /> : call.direction === 'incoming' ? <ArrowDownLeft size={10} /> : <ArrowUpRight size={10} />}
-                             </div>
-                         </div>
-                         <div className="flex-1">
-                             <h4 className="font-medium text-slate-900 dark:text-slate-100">{call.peerName}</h4>
-                             <span className="text-xs opacity-60 flex items-center gap-2">
-                                 {call.type === 'video' ? <Video size={12}/> : <Phone size={12}/>}
-                                 {new Date(call.timestamp).toLocaleDateString()} {new Date(call.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
-                             </span>
-                         </div>
-                     </div>
-                 ))}
-             </div>
-          )}
+          
+          <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50 dark:bg-gray-900">
+              {currentTab === 'chats' ? chats.map(chat => {
+                  const p = getPeerInfo(chat);
+                  // Filter search
+                  if(searchQuery && !p.username.toLowerCase().includes(searchQuery.toLowerCase())) return null;
+                  const active = chat.id === activeChatId;
+                  return (
+                      <div key={chat.id} onClick={() => setActiveChatId(chat.id)} className={`flex items-center gap-3 p-3 border-2 border-black dark:border-white cursor-pointer transition-transform active:scale-[0.98] ${active ? 'bg-black text-white dark:bg-white dark:text-black shadow-manga-sm dark:shadow-manga-sm-dark' : 'bg-white dark:bg-black hover:bg-gray-100 dark:hover:bg-gray-900'}`}>
+                          <div className="relative">
+                              <img src={p.avatar} className="w-12 h-12 border-2 border-current object-cover grayscale"/>
+                              {p.isOnline && chat.type === 'private' && <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-current border-2 border-white dark:border-black"></div>}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                              <div className="flex justify-between">
+                                  <h4 className="font-black uppercase truncate flex items-center gap-1">
+                                      <SafeText text={p.username} />
+                                      {chat.type === 'group' && <Users size={12}/>}
+                                  </h4>
+                                  {chat.unreadCount > 0 && <span className="bg-accent text-white px-1.5 font-bold text-xs border border-black dark:border-white">{chat.unreadCount}</span>}
+                              </div>
+                              <p className="text-xs font-mono truncate opacity-70">{chat.lastMessage ? (chat.lastMessage.type === 'text' ? chat.lastMessage.content : `[${chat.lastMessage.type.toUpperCase()}]`) : t('chat.start', lang)}</p>
+                          </div>
+                      </div>
+                  )
+              }) : (
+                  // Calls View (Contacts List)
+                  Object.values(userCache).filter(u => u.id !== currentUser?.id && u.id !== GEMINI_USER.id).map(user => (
+                      <div key={user.id} className="flex items-center justify-between gap-3 p-3 border-2 border-black dark:border-white bg-white dark:bg-black">
+                           <div className="flex items-center gap-3">
+                               <img src={user.avatar} className="w-12 h-12 border-2 border-black dark:border-white grayscale object-cover"/>
+                               <div>
+                                   <h4 className="font-black uppercase"><SafeText text={user.username} /></h4>
+                                   <p className="text-xs font-mono">{user.isOnline ? 'ONLINE' : 'OFFLINE'}</p>
+                               </div>
+                           </div>
+                           <div className="flex gap-2">
+                                <button onClick={() => setActiveCall({id: 'out', callerId: currentUser!.id, receiverId: user.id, status: 'connected', isVideo: false, isMuted: false})} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black"><Phone size={18}/></button>
+                                <button onClick={() => setActiveCall({id: 'out', callerId: currentUser!.id, receiverId: user.id, status: 'connected', isVideo: true, isMuted: false})} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black"><Video size={18}/></button>
+                           </div>
+                      </div>
+                  ))
+              )}
+          </div>
       </div>
 
       {/* Chat Area */}
-      <main className={`${!activeChatId ? 'hidden md:flex' : 'flex'} flex-1 flex-col relative bg-surface-variant/30 dark:bg-black/40`}>
-          {!activeChatId ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-8 text-center">
-                  <div className="w-28 h-28 bg-primary-container dark:bg-surface-darkContainer rounded-[28px] flex items-center justify-center mb-6 animate-bounce shadow-lg">
-                      <MessageCircle size={48} className="text-primary-DEFAULT dark:text-primary-dark" />
+      {activeChatId ? (
+          <div className="flex-1 flex flex-col relative halftone-light dark:halftone-dark">
+              {/* Header */}
+              <div className="h-20 border-b-4 border-black dark:border-white bg-white dark:bg-black flex justify-between items-center px-4 z-10 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors" onClick={() => activeChat?.type === 'group' ? setShowGroupSettingsModal(true) : null}>
+                  <div className="flex items-center gap-4">
+                      <button onClick={(e) => { e.stopPropagation(); setActiveChatId(null); }} className="md:hidden"><ArrowLeft size={24}/></button>
+                      <img src={peer?.avatar} className="w-12 h-12 border-2 border-black dark:border-white grayscale"/>
+                      <div>
+                          <h3 className="font-black text-2xl uppercase italic flex items-center gap-2">
+                              <SafeText text={peer?.username || ''} />
+                              {activeChat?.type === 'group' && <Edit size={16} className="opacity-50"/>}
+                          </h3>
+                          <p className="text-xs font-mono border border-black dark:border-white inline-block px-1">
+                              {activeChat?.type === 'group' ? `${activeChat.participants.length} members` : (peer?.isOnline ? 'ONLINE' : 'OFFLINE')}
+                          </p>
+                      </div>
                   </div>
-                  <h2 className="text-3xl font-normal text-slate-900 dark:text-slate-100 mb-2">Animetrika</h2>
-                  <p className="max-w-md opacity-70">Send and receive messages with end-to-end encryption. Call your friends and share moments securely.</p>
-                  <div className="mt-8 flex gap-3">
-                     <span className="px-4 py-1.5 rounded-full bg-surface-variant dark:bg-surface-darkContainer text-xs font-medium flex items-center gap-1"><Lock size={12}/> E2EE</span>
-                     <span className="px-4 py-1.5 rounded-full bg-surface-variant dark:bg-surface-darkContainer text-xs font-medium">M3 Design</span>
+                  <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                      {activeChat?.type === 'private' && (
+                          <>
+                              <button onClick={() => setActiveCall({id: 'out', callerId: currentUser!.id, receiverId: peer!.id, status: 'connected', isVideo: false, isMuted: false})} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black"><Phone size={20}/></button>
+                              <button onClick={() => setActiveCall({id: 'out', callerId: currentUser!.id, receiverId: peer!.id, status: 'connected', isVideo: true, isMuted: false})} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black"><Video size={20}/></button>
+                          </>
+                      )}
+                      <button onClick={() => setShowMenu(!showMenu)} className="p-2 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black"><MoreVertical size={20}/></button>
                   </div>
               </div>
-          ) : (
-              <>
-                {/* Chat Header */}
-                <div className="h-20 flex justify-between items-center px-6 bg-surface-light/95 dark:bg-surface-dark/95 backdrop-blur-md sticky top-0 z-10 border-b border-outline-light/10 dark:border-outline-dark/10">
-                    <div className="flex items-center gap-4">
-                        <button onClick={() => setActiveChatId(null)} className="md:hidden p-2 -ml-2 rounded-full hover:bg-surface-variant dark:hover:bg-white/10">
-                            <ArrowDownLeft className="rotate-45" size={24} />
-                        </button>
-                        
-                        <img src={activePeer?.avatar} className="w-10 h-10 rounded-full object-cover ring-2 ring-surface-variant dark:ring-surface-darkContainer" />
-                        <div>
-                            <h3 className="font-medium text-lg text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                                {activePeer?.name}
-                                {isPinned && <Pin size={14} className="rotate-45 text-primary-DEFAULT" fill="currentColor" />}
-                                {typingUsers.length > 0 && <span className="text-xs font-normal text-primary-DEFAULT animate-pulse">typing...</span>}
-                            </h3>
-                            <span className="text-xs opacity-60 block">
-                                {activePeer?.online ? 'Online' : 'Last seen recently'}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        {!isBlockedPeer && (
-                            <>
-                                <button onClick={() => startCall(false)} className="p-3 hover:bg-surface-variant dark:hover:bg-white/10 rounded-full text-slate-600 dark:text-slate-300 transition-colors"><Phone size={22} /></button>
-                                <button onClick={() => startCall(true)} className="p-3 hover:bg-surface-variant dark:hover:bg-white/10 rounded-full text-slate-600 dark:text-slate-300 transition-colors"><Video size={22} /></button>
-                            </>
-                        )}
-                        <div className="relative">
-                            <button onClick={() => setShowMenu(!showMenu)} className="p-3 hover:bg-surface-variant dark:hover:bg-white/10 rounded-full text-slate-600 dark:text-slate-300 transition-colors">
-                                <MoreVertical size={22} />
-                            </button>
-                            
-                            {showMenu && (
-                                <div className="absolute right-0 top-full mt-2 w-48 bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh rounded-[16px] shadow-xl py-2 animate-fade-in z-20 overflow-hidden">
-                                    <button
-                                        onClick={togglePin}
-                                        className="w-full text-left px-4 py-3 hover:bg-surface-variant dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 flex items-center gap-3 text-sm"
-                                    >
-                                        {isPinned ? <><PinOff size={18}/> Unpin Chat</> : <><Pin size={18}/> Pin Chat</>}
-                                    </button>
-                                    <button 
-                                        onClick={toggleBlock}
-                                        className="w-full text-left px-4 py-3 hover:bg-error-light/10 text-error-light dark:text-error-dark flex items-center gap-3 text-sm font-medium"
-                                    >
-                                        {isBlockedPeer ? <><ShieldCheck size={18}/> Unblock User</> : <><ShieldOff size={18}/> Block User</>}
-                                    </button>
-                                    <button 
-                                        onClick={() => {setMessages([]); setShowMenu(false);}}
-                                        className="w-full text-left px-4 py-3 hover:bg-surface-variant dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 flex items-center gap-3 text-sm"
-                                    >
-                                        <Trash2 size={18}/> Clear Chat
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
+              {showMenu && (
+                  <div className="absolute top-20 right-4 w-48 bg-white dark:bg-black border-4 border-black dark:border-white shadow-manga dark:shadow-manga-dark z-30">
+                      <button onClick={() => Storage.deleteMessage(activeChatId, 'all')} className="w-full text-left p-3 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black font-bold uppercase flex items-center gap-2"><Trash2 size={16}/> {t('chat.clear', lang)}</button>
+                  </div>
+              )}
 
-                {/* Messages List */}
-                <div className={`flex-1 overflow-y-auto p-4 md:p-6 space-y-4 scroll-smooth ${wallpaperClass}`}>
-                    {messages.map((msg, index) => {
-                        const isMe = msg.senderId === currentUser?.id;
-                        // Content is already decrypted in State
-                        const content = msg.content;
-                        
-                        // Date Separator Logic
-                        const showDateSeparator = index === 0 || !isSameDay(msg.timestamp, messages[index-1].timestamp);
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {messages.map((msg, i) => {
+                      const isMe = msg.senderId === currentUser?.id;
+                      const showDate = i === 0 || !isSameDay(msg.timestamp, messages[i-1].timestamp);
+                      const sender = userCache[msg.senderId];
+                      
+                      return (
+                          <React.Fragment key={msg.id}>
+                              {showDate && <div className="text-center my-4"><span className="bg-black text-white dark:bg-white dark:text-black px-3 py-1 font-black text-xs border-2 border-black dark:border-white">{formatDateSeparator(msg.timestamp, lang)}</span></div>}
+                              <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                  <div className={`max-w-[80%] relative group ${isMe ? 'mr-2' : 'ml-2'}`}>
+                                      
+                                      {/* Group sender name */}
+                                      {activeChat?.type === 'group' && !isMe && (
+                                          <div className="text-[10px] font-bold mb-1 ml-1 opacity-70 uppercase">{sender?.username || 'Unknown'}</div>
+                                      )}
 
-                        return (
-                            <React.Fragment key={msg.id}>
-                                {showDateSeparator && (
-                                    <div className="flex justify-center my-6">
-                                        <span className="bg-surface-variant/50 dark:bg-surface-darkContainerHigh text-slate-600 dark:text-slate-300 text-xs font-medium px-3 py-1 rounded-full shadow-sm">
-                                            {formatDateSeparator(msg.timestamp)}
-                                        </span>
-                                    </div>
-                                )}
+                                      {/* Speech Bubble Tail */}
+                                      <div className={`absolute top-4 w-4 h-4 bg-transparent border-t-2 border-black dark:border-white ${isMe ? '-right-2 border-r-2 rotate-45 bg-black dark:bg-white' : '-left-2 border-l-2 -rotate-45 bg-white dark:bg-black'}`}></div>
+                                      
+                                      <div className={`relative border-2 border-black dark:border-white p-3 shadow-manga-sm dark:shadow-manga-sm-dark ${isMe ? 'bg-black text-white dark:bg-white dark:text-black' : 'bg-white text-black dark:bg-black dark:text-white'}`}>
+                                          {msg.replyTo && (
+                                              <div className={`text-xs mb-2 p-1 border-l-4 ${isMe ? 'border-white/50' : 'border-black/50'}`}>
+                                                  <span className="font-bold block">{t('chat.replyTo', lang)}</span>
+                                                  <span className="italic opacity-70 line-clamp-1">{msg.replyTo.content || '...'}</span>
+                                              </div>
+                                          )}
+                                          {msg.type === 'text' && <p className="whitespace-pre-wrap font-medium">{msg.content}</p>}
+                                          {msg.type === 'image' && <LazyImage src={msg.mediaUrl!} onClick={() => setLightboxSrc(msg.mediaUrl!)} />}
+                                          {msg.type === 'audio' && <AudioPlayer src={msg.mediaUrl!} />}
+                                          <div className="text-[10px] font-mono mt-1 opacity-70 text-right flex justify-end gap-1 items-center">
+                                              {new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                              {isMe && (msg.status === 'read' ? <CheckCheck size={12}/> : <Check size={12}/>)}
+                                          </div>
+                                      </div>
+                                      {/* Reply Button */}
+                                      <button onClick={() => setReplyTo({id: msg.id, senderId: msg.senderId, senderName: 'User', content: msg.content, type: msg.type})} className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity ${isMe ? '-left-8' : '-right-8'}`}><Reply size={16}/></button>
+                                  </div>
+                              </div>
+                          </React.Fragment>
+                      )
+                  })}
+                  <div ref={messagesEndRef}/>
+              </div>
 
-                                <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} animate-slide-up group`}>
-                                    <div className={`max-w-[85%] md:max-w-[65%] relative flex gap-2 items-end`}>
-                                        
-                                        {/* Reply Action (Slide out or button on desktop) */}
-                                        {!isMe && (
-                                            <button onClick={() => handleReply(msg)} className="opacity-0 group-hover:opacity-100 p-2 mb-2 rounded-full hover:bg-surface-variant/50 text-slate-400 hover:text-primary-DEFAULT transition-all">
-                                                <Reply size={16} />
-                                            </button>
-                                        )}
-
-                                        <div className="relative">
-                                            {isMe && (
-                                                <div className="absolute top-2 -left-14 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={() => handleReply(msg)} className="p-2 text-slate-400 hover:text-primary-DEFAULT">
-                                                        <Reply size={16} />
-                                                    </button>
-                                                    <button onClick={() => handleDeleteMessage(msg.id)} className="p-2 text-slate-400 hover:text-error-light">
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </div>
-                                            )}
-                                            
-                                            <div className={`px-4 py-2 shadow-sm ${
-                                                isMe 
-                                                ? 'bg-primary-DEFAULT dark:bg-primary-dark text-white dark:text-primary-onContainer rounded-[20px] rounded-br-sm' 
-                                                : 'bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh text-slate-900 dark:text-slate-200 rounded-[20px] rounded-bl-sm'
-                                            }`}>
-                                                
-                                                {/* Reply Context */}
-                                                {msg.replyTo && (
-                                                    <div className={`mb-2 pl-2 border-l-2 text-xs cursor-pointer ${isMe ? 'border-white/50 text-white/80' : 'border-primary-DEFAULT text-slate-500'}`}>
-                                                        <span className="font-bold block">{msg.replyTo.senderName}</span>
-                                                        <span className="opacity-80 truncate block max-w-[150px]">{msg.replyTo.content || `[${msg.replyTo.type}]`}</span>
-                                                    </div>
-                                                )}
-
-                                                {msg.type === 'text' && <p className="whitespace-pre-wrap text-inherit leading-relaxed text-[15px]">{content}</p>}
-                                                {msg.type === 'image' && (
-                                                    <div className="rounded-xl overflow-hidden mb-1 cursor-pointer" onClick={() => setLightboxSrc(msg.mediaUrl!)}>
-                                                        <img src={msg.mediaUrl} className="max-w-full max-h-80 object-cover hover:scale-[1.02] transition-transform" />
-                                                    </div>
-                                                )}
-                                                {msg.type === 'audio' && (
-                                                   <AudioPlayer src={msg.mediaUrl!} />
-                                                )}
-                                                {msg.type === 'video' && (
-                                                    <div className="rounded-xl overflow-hidden mb-1">
-                                                        <video src={msg.mediaUrl} controls className="max-w-full max-h-80" />
-                                                    </div>
-                                                )}
-
-                                                <div className={`flex items-center justify-end gap-1 mt-0.5 ${isMe ? 'opacity-80' : 'opacity-50'}`}>
-                                                    <span className="text-[10px] font-medium">
-                                                        {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                                    </span>
-                                                    {isMe && (
-                                                        <>
-                                                            {msg.status === 'sent' && <Check size={12} />}
-                                                            {msg.status === 'delivered' && <CheckCheck size={12} />}
-                                                            {msg.status === 'read' && <CheckCheck size={12} className="text-white dark:text-primary-onContainer" />}
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </React.Fragment>
-                        );
-                    })}
-                    <div ref={messagesEndRef} />
-                </div>
-
-                {/* Input Area */}
-                <div className="p-4 bg-surface-light dark:bg-surface-dark">
-                    {isBlockedPeer ? (
-                        <div className="bg-surface-variant dark:bg-surface-darkContainer p-4 rounded-2xl text-center text-slate-500 text-sm font-medium">
-                            You have blocked this user. <button onClick={toggleBlock} className="text-primary-DEFAULT hover:underline">Unblock</button> to send messages.
-                        </div>
-                    ) : (
-                        <div className="max-w-5xl mx-auto">
-                            {/* Reply Preview */}
-                            {replyTo && (
-                                <div className="flex items-center justify-between bg-surface-variant/50 dark:bg-surface-darkContainerHigh rounded-t-2xl p-3 mb-1 animate-slide-up mx-2 border-l-4 border-primary-DEFAULT">
-                                    <div className="text-sm overflow-hidden">
-                                        <p className="text-primary-DEFAULT font-bold text-xs mb-0.5">Reply to {replyTo.senderName}</p>
-                                        <p className="text-slate-600 dark:text-slate-300 truncate">{replyTo.content || `[${replyTo.type}]`}</p>
-                                    </div>
-                                    <button onClick={() => setReplyTo(null)} className="p-1 hover:bg-surface-variant rounded-full">
-                                        <X size={16} />
-                                    </button>
-                                </div>
-                            )}
-
-                            <div className="flex items-end gap-2">
-                                <button onClick={() => fileInputRef.current?.click()} className="p-3 rounded-full bg-surface-variant/50 dark:bg-surface-darkContainer text-slate-500 hover:text-primary-DEFAULT hover:bg-primary-container/50 transition-all">
-                                    <Plus size={24} />
-                                </button>
-                                <input type="file" ref={fileInputRef} className="hidden" accept="image/*,video/*" onChange={handleFileSelect} />
-                                
-                                <div className={`flex-1 bg-surface-variant/50 dark:bg-surface-darkContainer rounded-[28px] flex items-center px-2 py-1 border border-transparent focus-within:border-primary-DEFAULT transition-all ${replyTo ? 'rounded-tl-sm' : ''}`}>
-                                    <button onClick={() => setShowEmoji(!showEmoji)} className="p-2 text-slate-400 hover:text-yellow-600 transition-colors">
-                                        <Smile size={24} />
-                                    </button>
-                                    <textarea 
-                                        value={inputText}
-                                        onChange={(e) => {
-                                            setInputText(e.target.value);
-                                            if(activeChatId && currentUser) {
-                                                Storage.setTyping(activeChatId, currentUser.id, true);
-                                                if(typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-                                                typingTimeoutRef.current = setTimeout(() => Storage.setTyping(activeChatId, currentUser.id, false), 2000);
-                                            }
-                                        }}
-                                        onKeyDown={(e) => {
-                                            if(e.key === 'Enter' && !e.shiftKey) {
-                                                e.preventDefault();
-                                                handleSendMessage();
-                                            }
-                                        }}
-                                        placeholder={isRecording ? `Recording... ${recordingTime}s` : "Message"}
-                                        className="flex-1 bg-transparent border-none focus:ring-0 text-slate-900 dark:text-slate-100 placeholder-slate-500 resize-none py-3 max-h-32 custom-scrollbar"
-                                        rows={1}
-                                        disabled={isRecording}
-                                    />
-                                </div>
-
-                                {inputText.trim() || replyTo ? (
-                                    <button onClick={() => handleSendMessage()} className="p-3 rounded-full bg-primary-DEFAULT dark:bg-primary-dark text-white dark:text-primary-onContainer hover:shadow-lg hover:scale-105 transition-all">
-                                        <Send size={24} className="ml-1" />
-                                    </button>
-                                ) : (
-                                    <button 
-                                        onClick={toggleRecording}
-                                        className={`p-3 rounded-full transition-all ${isRecording ? 'bg-error-light text-white scale-110 animate-pulse shadow-red-500/50 shadow-lg' : 'bg-surface-variant/50 dark:bg-surface-darkContainer text-slate-500 hover:text-primary-DEFAULT hover:bg-primary-container/50'}`}
-                                    >
-                                        {isRecording ? <div className="w-6 h-6 flex items-center justify-center"><div className="w-2 h-2 bg-white rounded-sm"></div></div> : <Mic size={24} />}
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    )}
-                    {showEmoji && (
-                        <div className="absolute bottom-24 left-6 bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh border border-outline-light/10 dark:border-outline-dark/10 p-4 rounded-[24px] shadow-xl grid grid-cols-8 gap-2 animate-slide-up z-20">
-                            {['😀','😂','😍','🤔','👍','👋','🔥','❤️','🎉','👀','😭','🙌','💩','👻','🦄','🍔'].map(e => (
-                                <button key={e} onClick={() => { setInputText(p => p + e); setShowEmoji(false); }} className="text-2xl hover:bg-surface-variant dark:hover:bg-white/10 p-2 rounded-full transition-colors">{e}</button>
-                            ))}
-                        </div>
-                    )}
-                </div>
-              </>
-          )}
-      </main>
+              {/* Input */}
+              <div className="p-4 border-t-4 border-black dark:border-white bg-white dark:bg-black relative">
+                  {replyTo && (
+                      <div className="absolute bottom-full left-0 w-full bg-gray-100 dark:bg-gray-900 border-t-2 border-black dark:border-white p-2 flex justify-between items-center">
+                          <div className="text-sm"><span className="font-bold">{t('chat.replyTo', lang)}:</span> {replyTo.content}</div>
+                          <button onClick={() => setReplyTo(null)}><X size={16}/></button>
+                      </div>
+                  )}
+                  <div className="flex gap-2 items-end">
+                      <button onClick={() => fileInputRef.current?.click()} className="p-3 border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition-colors"><Plus size={20}/></button>
+                      <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => handleSendMessage(e.target.files![0].type.startsWith('image') ? 'image' : 'video', e.target.files![0].name, URL.createObjectURL(e.target.files![0]))} />
+                      
+                      <textarea 
+                        value={inputText} onChange={e => setInputText(e.target.value)}
+                        className="flex-1 bg-transparent border-2 border-black dark:border-white p-3 font-medium outline-none focus:shadow-manga-sm dark:focus:shadow-manga-sm-dark resize-none h-12 max-h-32"
+                        placeholder={t('chat.start', lang)}
+                      />
+                      <button onClick={() => handleSendMessage()} className="p-3 border-2 border-black dark:border-white bg-black text-white dark:bg-white dark:text-black hover:shadow-manga-sm dark:hover:shadow-manga-sm-dark transition-all active:translate-y-1"><Send size={20}/></button>
+                  </div>
+              </div>
+          </div>
+      ) : (
+          <div className="hidden md:flex flex-1 items-center justify-center flex-col halftone-light dark:halftone-dark p-8 text-center">
+              <h2 className="text-6xl font-comic uppercase transform -rotate-6 mb-4 drop-shadow-[4px_4px_0_rgba(0,0,0,1)] dark:drop-shadow-[4px_4px_0_rgba(255,255,255,1)]">{t('app.name', lang)}</h2>
+              <p className="font-mono bg-black text-white dark:bg-white dark:text-black px-4 py-2 text-xl border-2 border-white dark:border-black">{t('app.slogan', lang)}</p>
+          </div>
+      )}
     </div>
   );
 }
 
-// --- UI Components ---
-const NavButton = ({ active, onClick, icon, label }: any) => (
-    <button 
-        onClick={onClick}
-        className={`flex flex-col items-center gap-1 w-14 py-1 rounded-2xl transition-all duration-300 group ${active ? '' : 'hover:bg-surface-variant/50 dark:hover:bg-white/5'}`}
-    >
-        <div className={`w-14 h-8 rounded-full flex items-center justify-center transition-colors duration-300 ${active ? 'bg-secondary-container dark:bg-secondary-darkContainer text-secondary-onContainer dark:text-secondary-onDarkContainer' : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200'}`}>
-            {icon}
-        </div>
-        <span className={`text-[11px] font-medium transition-colors duration-300 ${active ? 'text-slate-900 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400'}`}>{label}</span>
-    </button>
-);
-
-// --- Auth Form ---
-function LoginForm({ onLogin, onRegister, loading }: { onLogin: any, onRegister: any, loading: boolean }) {
-    const [mode, setMode] = useState<'login' | 'register'>('login');
-
+function AuthForm({ onSubmit }: { onSubmit: any }) {
+    const [isRegister, setIsRegister] = useState(false);
     return (
-        <form onSubmit={mode === 'login' ? onLogin : onRegister} className="flex flex-col gap-6">
-            <div className="space-y-4">
-                <div className="relative">
-                    <input 
-                        name="username" 
-                        type="text" 
-                        required 
-                        className="peer w-full bg-transparent border border-outline-light dark:border-outline-dark rounded-md px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-primary-DEFAULT dark:focus:border-primary-dark focus:ring-1 focus:ring-primary-DEFAULT dark:focus:ring-primary-dark transition-all placeholder-transparent"
-                        placeholder="Username"
-                        id="authUsername"
-                    />
-                    <label htmlFor="authUsername" className="absolute left-4 -top-2.5 bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh px-1 text-xs text-slate-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-base peer-focus:-top-2.5 peer-focus:text-xs peer-focus:text-primary-DEFAULT dark:peer-focus:text-primary-dark">
-                        Username
-                    </label>
-                </div>
-                <div className="relative">
-                    <input 
-                        name="password" 
-                        type="password" 
-                        required 
-                        className="peer w-full bg-transparent border border-outline-light dark:border-outline-dark rounded-md px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-primary-DEFAULT dark:focus:border-primary-dark focus:ring-1 focus:ring-primary-DEFAULT dark:focus:ring-primary-dark transition-all placeholder-transparent"
-                        placeholder="Password"
-                        id="authPassword"
-                    />
-                    <label htmlFor="authPassword" className="absolute left-4 -top-2.5 bg-surface-lightContainerHigh dark:bg-surface-darkContainerHigh px-1 text-xs text-slate-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-base peer-focus:-top-2.5 peer-focus:text-xs peer-focus:text-primary-DEFAULT dark:peer-focus:text-primary-dark">
-                        Password
-                    </label>
-                </div>
-            </div>
-            
-            <button disabled={loading} type="submit" className="w-full bg-primary-DEFAULT dark:bg-primary-dark hover:opacity-90 text-white dark:text-primary-onContainer font-medium py-3 rounded-full shadow-md transition-all flex justify-center items-center">
-                {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : (mode === 'login' ? 'Sign In' : 'Create Account')}
+        <form onSubmit={(e) => onSubmit(e, isRegister)} className="space-y-4">
+            <input name="username" placeholder="USERNAME" className="w-full bg-gray-100 dark:bg-gray-900 border-2 border-black dark:border-white p-4 font-bold outline-none focus:shadow-manga-sm dark:focus:shadow-manga-sm-dark" required/>
+            <input name="password" type="password" placeholder="PASSWORD" className="w-full bg-gray-100 dark:bg-gray-900 border-2 border-black dark:border-white p-4 font-bold outline-none focus:shadow-manga-sm dark:focus:shadow-manga-sm-dark" required/>
+            <button className="w-full bg-black text-white dark:bg-white dark:text-black font-black py-4 border-2 border-transparent hover:bg-white hover:text-black hover:border-black dark:hover:bg-black dark:hover:text-white dark:hover:border-white transition-all uppercase tracking-widest shadow-manga dark:shadow-manga-dark active:translate-y-1 active:shadow-none">
+                {isRegister ? t('auth.registerAction') : t('auth.loginAction')}
             </button>
-
             <div className="text-center">
-                <p className="text-sm text-slate-500">
-                    {mode === 'login' ? "Don't have an account? " : "Already have an account? "}
-                    <button type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="text-primary-DEFAULT dark:text-primary-dark hover:underline font-medium ml-1">
-                         {mode === 'login' ? "Sign up" : "Log in"}
-                    </button>
-                </p>
+                <button type="button" onClick={() => setIsRegister(!isRegister)} className="text-sm font-bold hover:underline decoration-2 underline-offset-4">
+                    {isRegister ? t('auth.hasAccount') : t('auth.noAccount')}
+                </button>
             </div>
         </form>
-    );
+    )
 }
