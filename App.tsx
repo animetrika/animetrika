@@ -141,9 +141,7 @@ const CreateGroupModal = ({ chats, userCache, onClose, onCreate }: { chats: Chat
     const [selected, setSelected] = useState<string[]>([]);
     const [groupName, setGroupName] = useState('');
     
-    // Deduplicate peers available to add
     const peerUsers = chats.map(c => {
-         const peerId = c.participants.find(pid => userCache[pid] && !userCache[pid].publicKey); 
          const peer = Object.values(userCache).find(u => c.participants.includes(u.id));
          return peer;
     }).filter((u): u is User => !!u && u.id !== GEMINI_USER.id);
@@ -202,7 +200,6 @@ const GroupSettingsModal = ({ chat, currentUser, userCache, onClose, onUpdate, o
     const [isAdding, setIsAdding] = useState(false);
     const [newUserIds, setNewUserIds] = useState<string[]>([]);
 
-    // Possible users to add (simplified: all known users from cache not in group)
     const availableUsers = Object.values(userCache).filter(u => !chat.participants.includes(u.id));
 
     const handleAdd = () => {
@@ -338,27 +335,17 @@ const BroadcastModal = ({ chats, userCache, onClose, onSend, lang }: { chats: Ch
     const [selected, setSelected] = useState<string[]>([]);
     const [text, setText] = useState('');
     
-    // Get unique peers from chats
-    const peers = chats.map(c => {
-        const peerId = c.participants.find(p => p !== 'current-user-id-placeholder' && p !== GEMINI_USER.id); // Need actual user ID check in real usage, passing simple here
-        return peerId; 
-    }).filter(Boolean);
-
-    const toggleSelect = (id: string) => {
-        if (selected.includes(id)) setSelected(selected.filter(s => s !== id));
-        else setSelected([...selected, id]);
-    };
-
-    // Re-derive peers properly in the render
     const peerUsers = chats.map(c => {
-         // We need a way to know who is 'me' to filter correctly, but since we iterate chats we can just grab the peer from userCache
-         // A hacky way is to find the user in userCache that matches a participant
-         const pId = c.participants.find(pid => userCache[pid] && !userCache[pid].publicKey); // Hack: userCache usually populated for peers
          const peer = Object.values(userCache).find(u => c.participants.includes(u.id));
          return peer;
     }).filter((u): u is User => !!u && u.id !== GEMINI_USER.id);
     
     const uniquePeers = Array.from(new Map(peerUsers.map(u => [u.id, u])).values());
+
+    const toggleSelect = (id: string) => {
+        if (selected.includes(id)) setSelected(selected.filter(s => s !== id));
+        else setSelected([...selected, id]);
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/90 dark:bg-black/90 p-4">
@@ -568,7 +555,7 @@ export default function App() {
       }
   }, [currentUser]);
 
-  // Notification Permission
+  // Notification Permission on Login
   useEffect(() => {
       if (currentUser && 'Notification' in window) {
           Notification.requestPermission();
@@ -673,7 +660,17 @@ export default function App() {
       setTimeout(() => messagesEndRef.current?.scrollIntoView(), 100);
   };
 
-  useEffect(() => { if(activeChatId) loadMessages(activeChatId); }, [activeChatId]);
+  // Mark read on open & ensure socket joined
+  useEffect(() => { 
+      if(activeChatId && currentUser) {
+          loadMessages(activeChatId); 
+          Storage.markMessagesAsRead(activeChatId, currentUser.id);
+          
+          // Ensure socket is in the room for typing/read events
+          const socket = getSocket();
+          if(socket) socket.emit('join_chat', activeChatId);
+      }
+  }, [activeChatId]);
 
   const handleTypingInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       setInputText(e.target.value);
@@ -690,7 +687,7 @@ export default function App() {
   const handleDeleteMessage = async () => {
       if (messageToDelete && activeChatId) {
           await Storage.deleteMessage(activeChatId, messageToDelete);
-          // Optimistic update, though socket will confirm
+          // Optimistic update
           setMessages(prev => prev.filter(m => m.id !== messageToDelete));
           setMessageToDelete(null);
       }
@@ -701,7 +698,7 @@ export default function App() {
       const content = contentVal || inputText;
       if (!content && !mediaUrl) return;
 
-      // Stop typing indicator immediately
+      // Stop typing indicator
       if(typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       Storage.setTyping(activeChatId, currentUser.id, false);
 
@@ -717,16 +714,21 @@ export default function App() {
       setInputText(''); setReplyTo(null);
       await Storage.sendMessage(newMessage);
 
-      // Gemini Logic
+      // Gemini Logic with Simulated Typing
       const chat = chats.find(c => c.id === activeChatId);
       if(chat?.type === 'private' && chat?.participants.includes(GEMINI_USER.id)) {
           try {
+              setTypingUsers(prev => { const s = new Set(prev); s.add(GEMINI_USER.id); return s; }); 
               const responseText = await getGeminiResponse(content);
+              setTypingUsers(prev => { const s = new Set(prev); s.delete(GEMINI_USER.id); return s; }); 
+
               const enc = await CryptoService.encryptMessage(responseText, activeChatId);
               const aiMsg: Message = { id: crypto.randomUUID(), chatId: activeChatId, senderId: GEMINI_USER.id, content: enc, type: 'text', timestamp: Date.now(), status: 'sent' };
               await Storage.sendMessage(aiMsg);
               setMessages(prev => [...prev, { ...aiMsg, content: responseText }]);
-          } catch(e){}
+          } catch(e){
+              setTypingUsers(prev => { const s = new Set(prev); s.delete(GEMINI_USER.id); return s; });
+          }
       }
   };
 
@@ -873,7 +875,6 @@ export default function App() {
           <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50 dark:bg-gray-900">
               {currentTab === 'chats' ? chats.map(chat => {
                   const p = getPeerInfo(chat);
-                  // Filter search
                   if(searchQuery && !p.username.toLowerCase().includes(searchQuery.toLowerCase())) return null;
                   const active = chat.id === activeChatId;
                   return (
@@ -966,12 +967,10 @@ export default function App() {
                               <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                                   <div className={`max-w-[80%] relative group ${isMe ? 'mr-2' : 'ml-2'}`}>
                                       
-                                      {/* Group sender name */}
                                       {activeChat?.type === 'group' && !isMe && (
                                           <div className="text-[10px] font-bold mb-1 ml-1 opacity-70 uppercase">{sender?.username || 'Unknown'}</div>
                                       )}
 
-                                      {/* Speech Bubble Tail */}
                                       <div className={`absolute top-4 w-4 h-4 bg-transparent border-t-2 border-black dark:border-white ${isMe ? '-right-2 border-r-2 rotate-45 bg-black dark:bg-white' : '-left-2 border-l-2 -rotate-45 bg-white dark:bg-black'}`}></div>
                                       
                                       <div className={`relative border-2 border-black dark:border-white p-3 shadow-manga-sm dark:shadow-manga-sm-dark ${isMe ? 'bg-black text-white dark:bg-white dark:text-black' : 'bg-white text-black dark:bg-black dark:text-white'}`}>
@@ -990,7 +989,6 @@ export default function App() {
                                           </div>
                                       </div>
                                       
-                                      {/* Message Actions (Reply & Delete) */}
                                       <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 ${isMe ? '-left-16' : '-right-8'}`}>
                                           <button onClick={() => setReplyTo({id: msg.id, senderId: msg.senderId, senderName: 'User', content: msg.content, type: msg.type})} className="p-1 bg-white dark:bg-black border border-black dark:border-white shadow-sm hover:scale-110 transition-transform"><Reply size={14}/></button>
                                           {isMe && <button onClick={() => setMessageToDelete(msg.id)} className="p-1 bg-white dark:bg-black border border-black dark:border-white shadow-sm hover:scale-110 transition-transform text-accent"><Trash2 size={14}/></button>}

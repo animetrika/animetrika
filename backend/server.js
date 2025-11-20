@@ -181,6 +181,19 @@ const chatSchema = new mongoose.Schema({
 });
 const Chat = mongoose.model('Chat', chatSchema);
 
+// --- Socket Helpers ---
+const onlineUsers = new Map(); // userId -> socketId
+
+const joinParticipantsToChat = (chat) => {
+    chat.participants.forEach(p => {
+        const socketId = onlineUsers.get(p);
+        if (socketId) {
+            const socket = io.sockets.sockets.get(socketId);
+            if (socket) socket.join(chat._id.toString());
+        }
+    });
+};
+
 // --- Middleware ---
 const authenticate = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -411,6 +424,7 @@ app.post('/api/groups', authenticate, async (req, res) => {
         });
         
         await chat.save();
+        joinParticipantsToChat(chat); // Join Sockets
         res.json(chat);
     } catch(e) {
         res.status(500).json({error: e.message});
@@ -450,6 +464,15 @@ app.post('/api/groups/:id/add', authenticate, async (req, res) => {
             chat.participants.push(...newMembers);
             newMembers.forEach(id => chat.unreadCounts.set(id, 0));
             await chat.save();
+            
+            // Join new members' sockets to the chat room
+            newMembers.forEach(id => {
+                const socketId = onlineUsers.get(id);
+                if (socketId) {
+                    const socket = io.sockets.sockets.get(socketId);
+                    if (socket) socket.join(chat._id.toString());
+                }
+            });
         }
         res.json(chat);
     } catch(e) {
@@ -469,6 +492,14 @@ app.post('/api/groups/:id/remove', authenticate, async (req, res) => {
         chat.participants = chat.participants.filter(p => p !== userIdToRemove);
         chat.adminIds = chat.adminIds.filter(p => p !== userIdToRemove);
         await chat.save();
+        
+        // Make socket leave? Not strictly necessary but good practice
+        const socketId = onlineUsers.get(userIdToRemove);
+        if (socketId) {
+            const socket = io.sockets.sockets.get(socketId);
+            if (socket) socket.leave(chat._id.toString());
+        }
+
         res.json(chat);
      } catch(e) {
          res.status(500).json({error: e.message});
@@ -484,7 +515,6 @@ app.post('/api/groups/:id/leave', authenticate, async (req, res) => {
         chat.participants = chat.participants.filter(p => p !== req.userId);
         chat.adminIds = chat.adminIds.filter(p => p !== req.userId);
         
-        // If no one left, delete chat? Or keep it.
         await chat.save();
         res.json({success: true});
     } catch(e) {
@@ -530,6 +560,7 @@ app.post('/api/chats', authenticate, async (req, res) => {
         unreadCounts: { [req.userId]: 0, [peerId]: 0 }
       });
       await chat.save();
+      joinParticipantsToChat(chat); // Join Sockets immediately
     }
     res.json({
       id: chat._id,
@@ -610,8 +641,6 @@ app.delete('/api/messages/:id', authenticate, async (req, res) => {
 
 // --- Socket.io Security & Logic ---
 
-const onlineUsers = new Map(); // userId -> socketId
-
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error("Authentication error: Token required"));
@@ -634,7 +663,7 @@ io.on('connection', (socket) => {
   User.findByIdAndUpdate(userId, { isOnline: true }).exec();
   io.emit('user_status', { userId, isOnline: true });
 
-  // Also join all group chats this user is part of
+  // Join all chat rooms
   Chat.find({ participants: userId }).then(chats => {
       chats.forEach(c => socket.join(c._id.toString()));
   });
@@ -684,10 +713,10 @@ io.on('connection', (socket) => {
 
       const payload = { id: msg._id, ...msg.toObject() };
       
-      // Broadcast to the room (which includes all group participants)
+      // Broadcast to the room
       io.to(msgData.chatId).emit('new_message', payload);
       
-      // Also send sidebar update notifications to participants individually (for unread counts)
+      // Sidebar updates (unread counts)
       chat.participants.forEach(p => {
           io.to(p).emit('chat_updated', { chatId: chat._id, lastMessage: payload, unreadCount: chat.unreadCounts.get(p) });
       });
