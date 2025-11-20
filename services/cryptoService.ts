@@ -28,7 +28,6 @@ const base642ab = (base64: string) => {
 };
 
 // Derive a symmetric key from the Chat ID (Simulation of Shared Key)
-// In a real app, this would be done via Diffie-Hellman key exchange.
 const getKey = async (chatId: string): Promise<CryptoKey> => {
   const keyMaterial = await window.crypto.subtle.importKey(
     "raw",
@@ -41,7 +40,7 @@ const getKey = async (chatId: string): Promise<CryptoKey> => {
   return window.crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: str2ab("animetrika-static-salt"), // In prod, utilize unique salts
+      salt: str2ab("animetrika-static-salt"), 
       iterations: 100000,
       hash: "SHA-256",
     },
@@ -70,17 +69,17 @@ export const encryptMessage = async (text: string, chatId: string): Promise<stri
       encoded
     );
 
-    // Format: IV (Base64) : Ciphertext (Base64)
-    return `${ab2base64(iv)}:${ab2base64(encrypted)}`;
+    // Fix: Pass iv.buffer (ArrayBuffer) instead of iv (Uint8Array)
+    return `${ab2base64(iv.buffer)}:${ab2base64(encrypted)}`;
   } catch (e) {
     console.error("Encryption failed", e);
-    return text; // Fallback (should handle error in UI)
+    return text; // Fallback
   }
 };
 
 export const decryptMessage = async (cipherText: string, chatId: string): Promise<string> => {
   try {
-    if (!cipherText.includes(':')) return cipherText; // Legacy or unencrypted
+    if (!cipherText.includes(':')) return cipherText; 
 
     const [ivStr, dataStr] = cipherText.split(':');
     const iv = base642ab(ivStr);
@@ -95,15 +94,6 @@ export const decryptMessage = async (cipherText: string, chatId: string): Promis
 
     return ab2str(decrypted);
   } catch (e) {
-    // console.error("Decryption failed", e);
     return "🔒 Encrypted Message";
   }
-};
-
-export const generateKeyPair = () => {
-  // Placeholder for future RSA implementation
-  return {
-    public: 'pub-' + crypto.randomUUID(),
-    private: 'priv-' + crypto.randomUUID()
-  };
 };

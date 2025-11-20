@@ -1,13 +1,18 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 const AI_ID = 'gemini-ai-bot';
 
 // Safe check for env
-const apiKey = process.env.API_KEY || ''; 
+const apiKey = process.env.API_KEY || 'DUMMY_KEY_FOR_BUILD'; 
 let ai: GoogleGenAI | null = null;
 
-if (apiKey) {
-    ai = new GoogleGenAI({ apiKey });
+try {
+    if (apiKey && apiKey !== 'DUMMY_KEY_FOR_BUILD') {
+        ai = new GoogleGenAI({ apiKey });
+    }
+} catch (e) {
+    console.warn("Gemini client failed to initialize", e);
 }
 
 export const isGeminiUser = (userId: string) => userId === AI_ID;

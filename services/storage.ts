@@ -86,6 +86,11 @@ export const updateUser = async (userId: string, updates: Partial<User>): Promis
     return res.data;
 };
 
+export const setChatWallpaper = async (chatId: string, wallpaper: string): Promise<User> => {
+    const res = await api.post(`/users/wallpaper/${chatId}`, { wallpaper });
+    return res.data;
+};
+
 export const searchUsers = async (query: string): Promise<User[]> => {
     const res = await api.get(`/users/search?q=${encodeURIComponent(query)}`);
     return res.data;
@@ -131,6 +136,26 @@ export const removeGroupMember = async (chatId: string, userIdToRemove: string):
 
 export const leaveGroup = async (chatId: string): Promise<void> => {
     await api.post(`/groups/${chatId}/leave`);
+};
+
+// Channel Functions
+export const createChannel = async (name: string, description: string, avatar?: string): Promise<Chat> => {
+    const res = await api.post('/channels', { name, description, avatar });
+    return res.data;
+};
+
+export const searchChannels = async (query: string): Promise<Chat[]> => {
+    const res = await api.get(`/channels/search?q=${encodeURIComponent(query)}`);
+    return res.data;
+};
+
+export const subscribeChannel = async (channelId: string): Promise<Chat> => {
+    const res = await api.post(`/channels/${channelId}/subscribe`);
+    return res.data;
+};
+
+export const unsubscribeChannel = async (channelId: string): Promise<void> => {
+    await api.post(`/channels/${channelId}/unsubscribe`);
 };
 
 

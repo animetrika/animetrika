@@ -17,13 +17,14 @@ const translations = {
     
     // Nav
     "nav.chats": "Chats",
+    "nav.channels": "Channels",
     "nav.calls": "Calls",
     "nav.settings": "Settings",
     "nav.broadcast": "Broadcast",
     
     // Search
     "search.placeholder": "Search...",
-    "search.results": "Search Results",
+    "search.channels": "Find Channels...",
     
     // Chat
     "chat.start": "Start a conversation",
@@ -33,13 +34,17 @@ const translations = {
     "chat.encrypted": "Locked & Encrypted",
     "chat.block": "Block User",
     "chat.unblock": "Unblock User",
-    "chat.pin": "Pin Chat",
-    "chat.unpin": "Unpin Chat",
+    "chat.pin": "Pin",
+    "chat.unpin": "Unpin",
     "chat.clear": "Clear Chat",
     "chat.blockedMessage": "You blocked this user. Unblock to send.",
     "chat.replyTo": "Reply to",
     "chat.today": "TODAY",
     "chat.yesterday": "YESTERDAY",
+    "chat.channelReadOnly": "Only admins can post in this channel.",
+    "chat.subscribe": "Subscribe",
+    "chat.unsubscribe": "Unsubscribe",
+    "chat.subscribers": "subscribers",
     
     // Settings
     "settings.title": "Settings",
@@ -55,7 +60,8 @@ const translations = {
     "settings.ghostDesc": "Hide online status",
     "settings.blocked": "Blocked Users",
     "settings.noblocked": "No blocked users.",
-    "settings.wallpaper": "Chat Wallpaper",
+    "settings.wallpaper": "Global Wallpaper",
+    "settings.setCustomWallpaper": "Set Custom Wallpaper",
     "settings.fontsize": "Font Size",
     "settings.small": "Small",
     "settings.medium": "Medium",
@@ -74,6 +80,12 @@ const translations = {
     "admin.delete": "Delete",
     "admin.revoke": "Revoke",
     "admin.makeAdmin": "Make Admin",
+    
+    // Channels
+    "channel.create": "New Channel",
+    "channel.name": "Channel Name",
+    "channel.desc": "Description",
+    "channel.createAction": "Create Channel",
     
     // Common
     "common.loading": "Loading...",
@@ -95,13 +107,14 @@ const translations = {
     
     // Nav
     "nav.chats": "Чаты",
+    "nav.channels": "Каналы",
     "nav.calls": "Звонки",
     "nav.settings": "Настройки",
     "nav.broadcast": "Рассылка",
     
     // Search
     "search.placeholder": "Поиск...",
-    "search.results": "Результаты поиска",
+    "search.channels": "Найти каналы...",
     
     // Chat
     "chat.start": "Начните беседу",
@@ -118,6 +131,10 @@ const translations = {
     "chat.replyTo": "Ответ",
     "chat.today": "СЕГОДНЯ",
     "chat.yesterday": "ВЧЕРА",
+    "chat.channelReadOnly": "Только админы могут писать сюда.",
+    "chat.subscribe": "Подписаться",
+    "chat.unsubscribe": "Отписаться",
+    "chat.subscribers": "подписчиков",
     
     // Settings
     "settings.title": "Настройки",
@@ -133,7 +150,8 @@ const translations = {
     "settings.ghostDesc": "Скрыть статус онлайн",
     "settings.blocked": "Черный список",
     "settings.noblocked": "Нет заблокированных",
-    "settings.wallpaper": "Обои чата",
+    "settings.wallpaper": "Общие обои",
+    "settings.setCustomWallpaper": "Установить свои обои",
     "settings.fontsize": "Размер шрифта",
     "settings.small": "Мелкий",
     "settings.medium": "Средний",
@@ -152,6 +170,12 @@ const translations = {
     "admin.delete": "Удалить",
     "admin.revoke": "Снять права",
     "admin.makeAdmin": "Назначить админом",
+
+    // Channels
+    "channel.create": "Новый канал",
+    "channel.name": "Название канала",
+    "channel.desc": "Описание",
+    "channel.createAction": "Создать канал",
     
     // Common
     "common.loading": "Загрузка...",
