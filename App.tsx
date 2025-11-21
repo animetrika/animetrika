@@ -678,8 +678,16 @@ export default function App() {
          if(!activeCall) {
               sendNotification('Incoming Call', `Call from ${userCache[data.callerId]?.username || 'User'}`);
               setActiveCall({
-                  id: 'incoming', chatId: 'unknown', callerId: data.callerId, receiverId: currentUser.id,
-                  status: 'ringing', isVideo: true, isMuted: false 
+                  id: 'incoming',
+                  chatId: 'unknown',
+                  initiatorId: data.callerId,
+                  participants: [data.callerId, currentUser.id], // Include both parties
+                  status: 'ringing', 
+                  isVideo: true, 
+                  isMuted: false,
+                  offerSignal: data.offer,
+                  callerId: data.callerId, // Store legacy prop for CallModal compatibility if needed
+                  receiverId: currentUser.id
               });
          }
       };
@@ -706,6 +714,7 @@ export default function App() {
       };
 
       socket.on('new_message', onNewMessage);
+      socket.on('call_offer', onCallOffer);
       socket.on('chat_updated', onChatUpdated);
       socket.on('typing', onTyping);
       socket.on('messages_read', onMessagesRead);
@@ -713,6 +722,7 @@ export default function App() {
 
       return () => { 
           socket.off('new_message', onNewMessage); 
+          socket.off('call_offer', onCallOffer);
           socket.off('chat_updated', onChatUpdated);
           socket.off('typing', onTyping);
           socket.off('messages_read', onMessagesRead);
@@ -842,14 +852,17 @@ export default function App() {
   
   const initiateCall = (isVideo: boolean, chat: Chat) => {
       if(!currentUser) return;
+      const receiverId = chat.type === 'private' ? chat.participants.find(p => p !== currentUser.id)! : 'group';
       setActiveCall({
           id: 'outgoing',
           chatId: chat.id,
-          callerId: currentUser.id,
-          receiverId: chat.type === 'private' ? chat.participants.find(p => p !== currentUser.id)! : 'group',
+          initiatorId: currentUser.id,
+          participants: chat.participants, // Pass all participants
           status: 'connected',
           isVideo,
-          isMuted: false
+          isMuted: false,
+          callerId: currentUser.id, // Legacy
+          receiverId: receiverId // Legacy
       });
   }
 
