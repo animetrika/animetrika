@@ -29,7 +29,8 @@ const allowedOrigins = [
   'https://chat.nwlnd.ru', 
   'http://chat.nwlnd.ru',
   'http://localhost:5173',
-  'http://localhost:4173'
+  'http://localhost:4173',
+  'http://localhost:3000'
 ];
 
 const corsOptions = {
@@ -63,47 +64,34 @@ if (!fs.existsSync(UPLOAD_DIR)){
 }
 
 // --- Security Middleware ---
-
-// 1. Helmet with customized CSP for WebRTC and Media
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
-  contentSecurityPolicy: false, // Disable CSP header here, let Nginx or Frontend handle specifics if needed
+  contentSecurityPolicy: false, 
 }));
-
-// 2. Data Sanitization against NoSQL Injection
 app.use(mongoSanitize());
-
-// 3. Data Sanitization against XSS
 app.use(xss());
+app.use(express.json({ limit: '1mb' }));
 
-// 4. Body Parser Limit
-app.use(express.json({ limit: '1mb' })); 
-
-// 5. Rate Limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // Higher limit for chat apps polling/media
+  windowMs: 15 * 60 * 1000, 
+  max: 2000, 
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use('/api/', limiter);
 
 const authLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 50,
+    windowMs: 60 * 60 * 1000, 
+    max: 20,
     message: "Too many login attempts, please try again later"
 });
 app.use('/api/login', authLimiter);
 app.use('/api/register', authLimiter);
 
-// Static Files
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-// Multer Setup - SECURE FILENAMES
 const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-      cb(null, UPLOAD_DIR)
-    },
+    destination: function (req, file, cb) { cb(null, UPLOAD_DIR) },
     filename: function (req, file, cb) {
       const ext = path.extname(file.originalname) || '.bin';
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -113,11 +101,11 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 100 * 1024 * 1024 }, // 100MB Max Server Side
+    limits: { fileSize: 100 * 1024 * 1024 }, 
     fileFilter: (req, file, cb) => {
         const allowedMimes = [
             'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-            'video/mp4', 'video/webm', 'video/ogg',
+            'video/mp4', 'video/webm', 'video/ogg', 'video/x-matroska',
             'audio/mpeg', 'audio/webm', 'audio/wav', 'audio/ogg'
         ];
         if(allowedMimes.includes(file.mimetype)) {
@@ -129,6 +117,13 @@ const upload = multer({
 });
 
 // --- MongoDB Models ---
+
+// System Config Model
+const configSchema = new mongoose.Schema({
+    key: { type: String, required: true, unique: true },
+    value: { type: mongoose.Schema.Types.Mixed }
+});
+const SystemConfig = mongoose.model('SystemConfig', configSchema);
 
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
@@ -147,12 +142,14 @@ const userSchema = new mongoose.Schema({
     chatWallpaper: { type: String, default: 'default' },
     chatWallpapers: { type: Map, of: String, default: {} },
     fontSize: { type: String, default: 'medium' },
-    language: { type: String, default: 'en' }
+    language: { type: String, default: 'en' },
+    enterToSend: { type: Boolean, default: true }
   }
 });
 const User = mongoose.model('User', userSchema);
 
 const messageSchema = new mongoose.Schema({
+  _id: { type: String, required: true }, // Client UUID
   chatId: { type: String, required: true },
   senderId: { type: String, required: true },
   content: { type: String, default: '' }, 
@@ -165,23 +162,31 @@ const messageSchema = new mongoose.Schema({
 const Message = mongoose.model('Message', messageSchema);
 
 const chatSchema = new mongoose.Schema({
-  participants: [{ type: String, required: true }], // For channels, these are subscribers
+  participants: [{ type: String }], 
   type: { type: String, default: 'private', enum: ['private', 'group', 'channel'] },
   name: { type: String }, 
   avatar: { type: String }, 
-  description: { type: String }, // For channels
-  adminIds: [{ type: String }], // Publishers/Admins
+  description: { type: String }, 
+  adminIds: [{ type: String }], 
   lastMessage: { type: mongoose.Schema.Types.Mixed },
   unreadCounts: { type: Map, of: Number, default: {} }, 
-  pinnedBy: [{ type: String }]
+  pinnedBy: [{ type: String }],
+  subscriberCount: { type: Number, default: 0 }
 });
 const Chat = mongoose.model('Chat', chatSchema);
 
-// --- Socket Helpers ---
+const subscriptionSchema = new mongoose.Schema({
+    userId: { type: String, required: true, index: true },
+    channelId: { type: String, required: true, index: true },
+    joinedAt: { type: Number, default: Date.now }
+});
+subscriptionSchema.index({ userId: 1, channelId: 1 }, { unique: true });
+const Subscription = mongoose.model('Subscription', subscriptionSchema);
+
 const onlineUsers = new Map(); 
 
-const joinParticipantsToChat = (chat) => {
-    chat.participants.forEach(p => {
+const joinParticipantsToChat = (chat, userIds) => {
+    userIds.forEach(p => {
         const socketId = onlineUsers.get(p);
         if (socketId) {
             const socket = io.sockets.sockets.get(socketId);
@@ -190,7 +195,6 @@ const joinParticipantsToChat = (chat) => {
     });
 };
 
-// --- Middleware ---
 const authenticate = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -203,21 +207,9 @@ const authenticate = (req, res, next) => {
   }
 };
 
-const adminOnly = async (req, res, next) => {
-    try {
-        const user = await User.findById(req.userId);
-        if(!user || !user.isAdmin) return res.status(403).json({ error: 'Admin access required' });
-        next();
-    } catch(e) {
-        res.status(500).json({ error: 'Server Error' });
-    }
-}
-
-// --- Routes ---
-
+// Routes
 app.post('/api/upload', authenticate, upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({error: 'No file uploaded'});
-    
     const protocol = req.protocol;
     const host = req.get('host');
     const forwardedProto = req.get('x-forwarded-proto');
@@ -228,8 +220,25 @@ app.post('/api/upload', authenticate, upload.single('file'), (req, res) => {
     res.json({ url: fileUrl });
 });
 
+// Auth & User Routes
+app.get('/api/me', authenticate, async (req, res) => {
+    try {
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        res.json(mapUser(user));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/register', async (req, res) => {
   try {
+    // Check Registration Toggle
+    const regConfig = await SystemConfig.findOne({ key: 'registrationEnabled' });
+    if (regConfig && regConfig.value === false) {
+        return res.status(403).json({ error: 'Registration is currently disabled by administrator.' });
+    }
+
     const { username, password } = req.body;
     if (typeof username !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'Invalid input' });
     if (username.length < 3 || password.length < 6) return res.status(400).json({ error: 'Credentials too short' });
@@ -291,7 +300,7 @@ app.post('/api/users/wallpaper/:chatId', authenticate, async (req, res) => {
         const user = await User.findById(req.userId);
         if(!user.settings.chatWallpapers) user.settings.chatWallpapers = new Map();
         
-        user.settings.chatWallpapers.set(req.params.chatId, wallpaper);
+        user.settings.chatWallpapers.set(req.params.chatId, req.body.wallpaper);
         await user.save();
         res.json(mapUser(user));
     } catch(e) {
@@ -338,57 +347,142 @@ app.post('/api/users/bulk', authenticate, async (req, res) => {
   }
 });
 
-// Admin Routes (omitted for brevity, kept same as previous)
-
-// Channel Routes (New)
-app.post('/api/channels', authenticate, async (req, res) => {
+// --- System Config Routes (Admin Only) ---
+app.get('/api/system/config', authenticate, async (req, res) => {
     try {
-        const { name, description, avatar } = req.body;
-        const chat = new Chat({
-            type: 'channel',
-            name,
-            description,
-            avatar: avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${name}`,
-            participants: [req.userId], // Creator is first subscriber
-            adminIds: [req.userId], // Creator is admin
-            unreadCounts: { [req.userId]: 0 }
+        const user = await User.findById(req.userId);
+        if (!user?.isAdmin) return res.status(403).json({ error: "Admin only" });
+        
+        const reg = await SystemConfig.findOne({ key: 'registrationEnabled' });
+        res.json({ registrationEnabled: reg ? reg.value : true });
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/system/config/registration', authenticate, async (req, res) => {
+    try {
+        const user = await User.findById(req.userId);
+        if (!user?.isAdmin) return res.status(403).json({ error: "Admin only" });
+        
+        const { enabled } = req.body;
+        await SystemConfig.findOneAndUpdate(
+            { key: 'registrationEnabled' }, 
+            { key: 'registrationEnabled', value: enabled }, 
+            { upsert: true, new: true }
+        );
+        res.json({ success: true, registrationEnabled: enabled });
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+// Chats & Channels
+app.get('/api/chats', authenticate, async (req, res) => {
+    try {
+        const chats = await Chat.find({ participants: req.userId, type: { $ne: 'channel' } });
+        const subs = await Subscription.find({ userId: req.userId });
+        const channelIds = subs.map(s => s.channelId);
+        const channels = await Chat.find({ _id: { $in: channelIds } });
+
+        const allChats = [...chats, ...channels].map(c => {
+            const obj = c.toObject();
+            obj.id = c._id;
+            obj.unreadCount = c.unreadCounts.get(req.userId) || 0;
+            if (c.type === 'channel') {
+                obj.participants = [req.userId]; 
+            }
+            return obj;
         });
+        res.json(allChats);
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/chats', authenticate, async (req, res) => {
+    const { peerId } = req.body;
+    let chat = await Chat.findOne({ participants: { $all: [req.userId, peerId] }, type: 'private' });
+    if (!chat) {
+        chat = new Chat({ participants: [req.userId, peerId], unreadCounts: { [req.userId]: 0, [peerId]: 0 } });
         await chat.save();
-        joinParticipantsToChat(chat);
-        res.json(chat);
+        joinParticipantsToChat(chat, [req.userId, peerId]);
+    }
+    res.json({ id: chat._id, ...chat.toObject() });
+});
+
+app.post('/api/chats/:id/clear', authenticate, async (req, res) => {
+    try {
+        const chat = await Chat.findById(req.params.id);
+        if(!chat) return res.status(404).json({error: 'Chat not found'});
+        
+        // Security: Ensure user is participant
+        if(chat.type !== 'channel' && !chat.participants.includes(req.userId)) return res.status(403).json({error: 'Access denied'});
+        if(chat.type === 'channel' && !chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Admin only'});
+
+        // Delete all messages in this chat
+        await Message.deleteMany({ chatId: req.params.id });
+        
+        // Emit clear event
+        io.to(req.params.id).emit('chat_cleared', { chatId: req.params.id });
+        
+        res.json({ success: true });
     } catch(e) {
         res.status(500).json({error: e.message});
     }
 });
 
+app.post('/api/groups', authenticate, async (req, res) => {
+    const { name, participants, avatar } = req.body;
+    const all = [...new Set([...participants, req.userId])];
+    const chat = new Chat({ type: 'group', name, participants: all, adminIds: [req.userId], avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${name}`, unreadCounts: Object.fromEntries(all.map(p => [p, 0])) });
+    await chat.save();
+    joinParticipantsToChat(chat, all);
+    res.json({ id: chat._id, ...chat.toObject() });
+});
+
+// CHANNELS
+app.post('/api/channels', authenticate, async (req, res) => {
+    const { name, description, avatar } = req.body;
+    const chat = new Chat({
+        type: 'channel', name, description,
+        avatar: avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${name}`,
+        adminIds: [req.userId],
+        participants: [],
+        unreadCounts: { [req.userId]: 0 },
+        subscriberCount: 1
+    });
+    await chat.save();
+    
+    await new Subscription({ userId: req.userId, channelId: chat._id.toString() }).save();
+    
+    const socketId = onlineUsers.get(req.userId);
+    if(socketId) io.sockets.sockets.get(socketId)?.join(chat._id.toString());
+
+    const chatObj = chat.toObject();
+    chatObj.participants = [req.userId]; 
+    res.json({ id: chat._id, ...chatObj });
+});
+
 app.get('/api/channels/search', authenticate, async (req, res) => {
-    try {
-        const query = req.query.q;
-        let filter = { type: 'channel' };
-        if(query && typeof query === 'string') {
-             const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-             filter.name = { $regex: safeQuery, $options: 'i' };
-        }
-        const channels = await Chat.find(filter).limit(20);
-        res.json(channels);
-    } catch(e) {
-        res.status(500).json({error: e.message});
-    }
+    const safeQuery = req.query.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const channels = await Chat.find({ type: 'channel', name: { $regex: safeQuery, $options: 'i' } }).limit(20);
+    res.json(channels.map(c => ({ id: c._id, ...c.toObject(), participants: [] })));
 });
 
 app.post('/api/channels/:id/subscribe', authenticate, async (req, res) => {
     try {
-        const chat = await Chat.findById(req.params.id);
+        const channelId = req.params.id;
+        const chat = await Chat.findById(channelId);
         if(!chat || chat.type !== 'channel') return res.status(404).json({error: 'Channel not found'});
         
-        if(!chat.participants.includes(req.userId)) {
-            chat.participants.push(req.userId);
-            chat.unreadCounts.set(req.userId, 0);
-            await chat.save();
+        const exists = await Subscription.findOne({ userId: req.userId, channelId });
+        if(!exists) {
+            await new Subscription({ userId: req.userId, channelId }).save();
+            await Chat.findByIdAndUpdate(channelId, { $inc: { subscriberCount: 1 } });
+            
             const socketId = onlineUsers.get(req.userId);
-            if(socketId) io.sockets.sockets.get(socketId)?.join(chat._id.toString());
+            if(socketId) io.sockets.sockets.get(socketId)?.join(channelId);
         }
-        res.json(chat);
+        
+        const chatObj = chat.toObject();
+        chatObj.id = chat._id;
+        chatObj.participants = [req.userId]; 
+        res.json(chatObj);
     } catch(e) {
         res.status(500).json({error: e.message});
     }
@@ -396,164 +490,12 @@ app.post('/api/channels/:id/subscribe', authenticate, async (req, res) => {
 
 app.post('/api/channels/:id/unsubscribe', authenticate, async (req, res) => {
     try {
-        const chat = await Chat.findById(req.params.id);
-        if(!chat || chat.type !== 'channel') return res.status(404).json({error: 'Channel not found'});
-        
-        // Do not allow the last admin to leave without deleting? (Optional rule, keeping simple for now)
-        chat.participants = chat.participants.filter(p => p !== req.userId);
-        // If user was admin, remove them? Depends on logic. Let's remove admin role if they unsub
-        chat.adminIds = chat.adminIds.filter(p => p !== req.userId);
-        
-        await chat.save();
-        const socketId = onlineUsers.get(req.userId);
-        if(socketId) io.sockets.sockets.get(socketId)?.leave(chat._id.toString());
-        res.json({success: true});
-    } catch(e) {
-        res.status(500).json({error: e.message});
-    }
-});
-
-// Group Routes
-app.post('/api/groups', authenticate, async (req, res) => {
-    try {
-        const { name, participants, avatar } = req.body;
-        const allParticipants = [...new Set([...participants, req.userId])];
-        const chat = new Chat({
-            type: 'group',
-            name,
-            avatar: avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${name}`,
-            participants: allParticipants,
-            adminIds: [req.userId],
-            unreadCounts: Object.fromEntries(allParticipants.map(p => [p, 0]))
-        });
-        await chat.save();
-        joinParticipantsToChat(chat); 
-        res.json(chat);
-    } catch(e) {
-        res.status(500).json({error: e.message});
-    }
-});
-
-app.put('/api/groups/:id', authenticate, async (req, res) => {
-    try {
-        const chat = await Chat.findById(req.params.id);
-        if(!chat || !chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Access denied'});
-        const { name, avatar, description } = req.body;
-        if(name) chat.name = name;
-        if(avatar) chat.avatar = avatar;
-        if(description) chat.description = description;
-        await chat.save();
-        res.json(chat);
-    } catch(e) {
-        res.status(500).json({error: e.message});
-    }
-});
-
-app.post('/api/groups/:id/add', authenticate, async (req, res) => {
-    try {
-        const { userIds } = req.body;
-        const chat = await Chat.findById(req.params.id);
-        if(!chat || !chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Access denied'});
-        const newMembers = userIds.filter(id => !chat.participants.includes(id));
-        if(newMembers.length > 0) {
-            chat.participants.push(...newMembers);
-            newMembers.forEach(id => chat.unreadCounts.set(id, 0));
-            await chat.save();
-            newMembers.forEach(id => {
-                const socketId = onlineUsers.get(id);
-                if (socketId) io.sockets.sockets.get(socketId)?.join(chat._id.toString());
-            });
+        const sub = await Subscription.findOneAndDelete({ userId: req.userId, channelId: req.params.id });
+        if (sub) {
+            await Chat.findByIdAndUpdate(req.params.id, { $inc: { subscriberCount: -1 } });
+            const socketId = onlineUsers.get(req.userId);
+            if(socketId) io.sockets.sockets.get(socketId)?.leave(req.params.id);
         }
-        res.json(chat);
-    } catch(e) {
-         res.status(500).json({error: e.message});
-    }
-});
-
-app.post('/api/groups/:id/remove', authenticate, async (req, res) => {
-     try {
-        const { userIdToRemove } = req.body;
-        const chat = await Chat.findById(req.params.id);
-        if(!chat || !chat.adminIds.includes(req.userId)) return res.status(403).json({error: 'Access denied'});
-        chat.participants = chat.participants.filter(p => p !== userIdToRemove);
-        chat.adminIds = chat.adminIds.filter(p => p !== userIdToRemove);
-        await chat.save();
-        const socketId = onlineUsers.get(userIdToRemove);
-        if (socketId) io.sockets.sockets.get(socketId)?.leave(chat._id.toString());
-        res.json(chat);
-     } catch(e) {
-         res.status(500).json({error: e.message});
-     }
-});
-
-app.post('/api/groups/:id/leave', authenticate, async (req, res) => {
-    try {
-        const chat = await Chat.findById(req.params.id);
-        if(!chat) return res.status(404).json({error: 'Chat not found'});
-        chat.participants = chat.participants.filter(p => p !== req.userId);
-        chat.adminIds = chat.adminIds.filter(p => p !== req.userId);
-        await chat.save();
-        res.json({success: true});
-    } catch(e) {
-        res.status(500).json({error: e.message});
-    }
-});
-
-app.get('/api/chats', authenticate, async (req, res) => {
-  try {
-    const chats = await Chat.find({ participants: req.userId });
-    const mappedChats = chats.map(c => ({
-      id: c._id,
-      participants: c.participants,
-      type: c.type,
-      name: c.name,
-      avatar: c.avatar,
-      description: c.description,
-      adminIds: c.adminIds,
-      lastMessage: c.lastMessage,
-      unreadCount: c.unreadCounts.get(req.userId) || 0,
-      pinnedBy: c.pinnedBy
-    }));
-    res.json(mappedChats);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/chats', authenticate, async (req, res) => {
-  try {
-    const { peerId } = req.body;
-    let chat = await Chat.findOne({
-      participants: { $all: [req.userId, peerId] },
-      type: 'private'
-    });
-    if (!chat) {
-      chat = new Chat({
-        participants: [req.userId, peerId],
-        unreadCounts: { [req.userId]: 0, [peerId]: 0 }
-      });
-      await chat.save();
-      joinParticipantsToChat(chat);
-    }
-    res.json({
-      id: chat._id,
-      participants: chat.participants,
-      unreadCount: 0,
-      type: chat.type,
-      pinnedBy: chat.pinnedBy
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/chats/:id/pin', authenticate, async (req, res) => {
-    try {
-        const chat = await Chat.findById(req.params.id);
-        const index = chat.pinnedBy.indexOf(req.userId);
-        if(index === -1) chat.pinnedBy.push(req.userId);
-        else chat.pinnedBy.splice(index, 1);
-        await chat.save();
         res.json({ success: true });
     } catch(e) {
         res.status(500).json({error: e.message});
@@ -561,34 +503,20 @@ app.post('/api/chats/:id/pin', authenticate, async (req, res) => {
 });
 
 app.get('/api/chats/:id/messages', authenticate, async (req, res) => {
-  try {
-    const messages = await Message.find({ chatId: req.params.id }).sort({ timestamp: 1 });
+    const messages = await Message.find({ chatId: req.params.id }).sort({ timestamp: 1 }).limit(500);
     res.json(messages.map(m => ({ id: m._id, ...m.toObject() })));
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 app.post('/api/chats/:id/read', authenticate, async (req, res) => {
-    try {
-        const chat = await Chat.findById(req.params.id);
-        if(chat) {
-            chat.unreadCounts.set(req.userId, 0);
-            await chat.save();
+    const chat = await Chat.findById(req.params.id);
+    if(chat) {
+        chat.unreadCounts.set(req.userId, 0);
+        await chat.save();
+        if (chat.type !== 'channel') {
+             io.to(req.params.id).emit('messages_read', { chatId: req.params.id, userId: req.userId });
         }
-        // Only private chats really need distinct read receipts logic for individuals
-        // For channels, we just clear the unread count for the user
-        if (chat && chat.type !== 'channel') {
-            await Message.updateMany(
-                { chatId: req.params.id, senderId: { $ne: req.userId }, status: { $ne: 'read' } },
-                { $set: { status: 'read' } }
-            );
-            io.to(req.params.id).emit('messages_read', { chatId: req.params.id, userId: req.userId });
-        }
-        res.json({ success: true });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
     }
+    res.json({ success: true });
 });
 
 app.delete('/api/messages/:id', authenticate, async (req, res) => {
@@ -606,35 +534,33 @@ app.delete('/api/messages/:id', authenticate, async (req, res) => {
     }
 });
 
-// Socket IO
+// Socket Logic
 io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  if (!token) return next(new Error("Authentication error: Token required"));
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    socket.userId = decoded.userId; 
+    const decoded = jwt.verify(socket.handshake.auth.token, JWT_SECRET);
+    socket.userId = decoded.userId;
     next();
-  } catch (err) {
-    next(new Error("Authentication error: Invalid token"));
-  }
+  } catch (err) { next(new Error("Auth error")); }
 });
 
-io.on('connection', (socket) => {
-  const userId = socket.userId; 
+io.on('connection', async (socket) => {
+  const userId = socket.userId;
   onlineUsers.set(userId, socket.id);
   socket.join(userId);
   
   User.findByIdAndUpdate(userId, { isOnline: true }).exec();
   io.emit('user_status', { userId, isOnline: true });
 
-  Chat.find({ participants: userId }).then(chats => {
-      chats.forEach(c => socket.join(c._id.toString()));
-  });
+  const chats = await Chat.find({ participants: userId, type: { $ne: 'channel' } });
+  chats.forEach(c => socket.join(c._id.toString()));
+  
+  const subs = await Subscription.find({ userId });
+  subs.forEach(s => socket.join(s.channelId));
 
   socket.on('disconnect', () => {
-    onlineUsers.delete(userId);
-    User.findByIdAndUpdate(userId, { isOnline: false, lastSeen: Date.now() }).exec();
-    io.emit('user_status', { userId, isOnline: false, lastSeen: Date.now() });
+      onlineUsers.delete(userId);
+      User.findByIdAndUpdate(userId, { isOnline: false, lastSeen: Date.now() }).exec();
+      io.emit('user_status', { userId, isOnline: false, lastSeen: Date.now() });
   });
 
   socket.on('join_chat', (chatId) => {
@@ -646,76 +572,48 @@ io.on('connection', (socket) => {
   });
 
   socket.on('send_message', async (msgData) => {
-    try {
-      // CHANNEL PERMISSION CHECK
-      const chat = await Chat.findById(msgData.chatId);
-      if (chat && chat.type === 'channel' && !chat.adminIds.includes(userId)) {
-          // Silently fail or emit error back to sender
-          return; 
-      }
+      try {
+          const chat = await Chat.findById(msgData.chatId);
+          if(!chat) return;
+          if (chat.type === 'channel' && !chat.adminIds.includes(userId)) return;
 
-      const msg = new Message({
-        chatId: msgData.chatId,
-        senderId: userId, 
-        content: msgData.content,
-        type: msgData.type,
-        mediaUrl: msgData.mediaUrl,
-        replyTo: msgData.replyTo,
-        status: 'sent'
-      });
-      await msg.save();
-
-      if (chat) {
-        chat.lastMessage = msg;
-        chat.participants.forEach(p => {
-            if(p !== userId) {
-                const count = chat.unreadCounts.get(p) || 0;
-                chat.unreadCounts.set(p, count + 1);
-            }
-        });
-        await chat.save();
-      }
-      const payload = { id: msg._id, ...msg.toObject() };
-      io.to(msgData.chatId).emit('new_message', payload);
-      
-      // Notify participants list update
-      if (chat) {
-          chat.participants.forEach(p => {
-              io.to(p).emit('chat_updated', { chatId: chat._id, lastMessage: payload, unreadCount: chat.unreadCounts.get(p) });
+          const msg = new Message({
+              _id: msgData.id, 
+              chatId: msgData.chatId, senderId: userId, 
+              content: msgData.content, type: msgData.type, 
+              mediaUrl: msgData.mediaUrl, replyTo: msgData.replyTo, status: 'sent'
           });
-      }
-    } catch (e) {
-      console.error("Socket message error", e);
-    }
-  });
+          await msg.save();
+          
+          chat.lastMessage = msg;
+          if (chat.type !== 'channel') {
+              chat.participants.forEach(p => { if(p!==userId) chat.unreadCounts.set(p, (chat.unreadCounts.get(p)||0)+1); });
+          }
+          await chat.save();
 
-  // Group Video Call Logic
-  socket.on('join_call_room', ({ chatId }) => {
-      socket.join(`call_${chatId}`);
-      socket.to(`call_${chatId}`).emit('user_joined_call', { userId: socket.userId });
+          const payload = { id: msg._id, ...msg.toObject() };
+          io.to(msgData.chatId).emit('new_message', payload);
+          
+          if (chat) {
+              chat.participants.forEach(p => {
+                  io.to(p).emit('chat_updated', { chatId: chat._id, lastMessage: payload, unreadCount: chat.unreadCounts.get(p) });
+              });
+          }
+      } catch(e) { console.error(e); }
   });
-
-  socket.on('leave_call_room', ({ chatId }) => {
-      socket.leave(`call_${chatId}`);
-      socket.to(`call_${chatId}`).emit('user_left_call', { userId: socket.userId });
-  });
-
+  
   socket.on('signal', (data) => {
       io.to(data.targetId).emit('signal', {
-          senderId: socket.userId,
+          senderId: userId,
           signal: data.signal
       });
   });
 
-  // Legacy support
-  socket.on('call_offer', (data) => {
-      io.to(data.targetId).emit('call_offer', { offer: data.offer, callerId: userId });
-  });
-  socket.on('call_answer', (data) => {
-      io.to(data.targetId).emit('call_answer', { answer: data.answer, responderId: userId });
-  });
-  socket.on('ice_candidate', (data) => {
-      io.to(data.targetId).emit('ice_candidate', { candidate: data.candidate, senderId: userId });
+  // Handle Call Termination correctly
+  socket.on('end_call', (data) => {
+      // data.targetId is the peer ID or chat ID depending on call type
+      // For 1-1 calls, just emit to the peer
+      io.to(data.targetId).emit('call_ended', { userId });
   });
 });
 
@@ -734,8 +632,10 @@ function mapUser(u) {
   };
 }
 
-mongoose.connect(MONGO_URI)
-  .then(() => {
-    server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-  })
-  .catch(err => console.error(err));
+mongoose.connect(MONGO_URI).then(() => {
+    // Ensure config exists
+    SystemConfig.findOne({ key: 'registrationEnabled' }).then(conf => {
+        if (!conf) new SystemConfig({ key: 'registrationEnabled', value: true }).save();
+    });
+    server.listen(PORT, () => console.log(`Server running on ${PORT}`));
+});
